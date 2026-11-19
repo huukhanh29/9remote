@@ -62,6 +62,44 @@ const isSaneSize = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
 // Pending shrink per session — a later resize (in either direction) supersedes it.
 const shrinkTimers = new Map();
 
+// Guard against duplicate multi-character batch/prompt inputs re-sent on carrier
+// reconnect or ack timeout (along with their trailing Enter keystroke).
+const BATCH_DEDUPE_WINDOW_MS = 5000;
+const TRAILING_CR_DROP_MS = 500;
+const MIN_BATCH_DEDUPE_LEN = 4;
+const recentBatchInputs = new Map(); // sessionId -> { text, ts, dropCrUntil }
+
+export function isDuplicateBatchInput(sessionId, rawData, now = Date.now()) {
+  if (typeof rawData !== "string" || !rawData) return false;
+  const prev = recentBatchInputs.get(sessionId);
+
+  // Drop the trailing Enter that rides right behind a deduplicated batch text.
+  if ((rawData === "\r" || rawData === "\n" || rawData === "\r\n") && prev) {
+    if (prev.dropCrUntil && now <= prev.dropCrUntil) {
+      prev.dropCrUntil = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // Single keystrokes or terminal escape/control sequences are never deduplicated,
+  // and typing anything new clears the previous batch memory for this session.
+  const trimmed = rawData.replace(/[\r\n]+$/, "");
+  if (trimmed.length < MIN_BATCH_DEDUPE_LEN || rawData.startsWith("\x1b")) {
+    recentBatchInputs.delete(sessionId);
+    return false;
+  }
+
+  if (prev && prev.text === trimmed && (now - prev.ts) <= BATCH_DEDUPE_WINDOW_MS) {
+    prev.ts = now;
+    prev.dropCrUntil = rawData.endsWith("\r") || rawData.endsWith("\n") ? 0 : now + TRAILING_CR_DROP_MS;
+    return true;
+  }
+
+  recentBatchInputs.set(sessionId, { text: trimmed, ts: now, dropCrUntil: 0 });
+  return false;
+}
+
 function clearShrink(sessionId) {
   const t = shrinkTimers.get(sessionId);
   if (!t) return;
@@ -91,6 +129,11 @@ export function setupInputHandlers(socket, sessions) {
     if (!sessionId) return cb?.({ ok: false, error: "no-session-id" });
     const session = sessions.get(sessionId);
     if (!session) return cb?.({ ok: false, error: "no-session" });
+    const strData = Buffer.isBuffer(data) ? data.toString("utf-8") : data;
+    if (isDuplicateBatchInput(sessionId, strData)) {
+      console.log(`[input-dedupe] dropped duplicate batch input for ${sessionId} (len=${strData.length})`);
+      return cb?.({ ok: true, deduped: true });
+    }
     trackLaunchLine(sessionId, data);
     if (session.daemon && daemonClient.isConnected()) {
       // sendInput is fire-and-forget over the unix socket: a truthy return means the

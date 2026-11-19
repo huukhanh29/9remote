@@ -15,6 +15,35 @@ const logger = createLogger("transport");
 registerProtocol(WsProtocol);
 registerProtocol(WebRtcProtocol);
 
+// Remember highest applied seq per (deviceId, client epoch) across WS reconnects so a
+// newly created server-side ProtocolManager does not re-execute already-applied inputs
+// when the client's flushBuffer() replays its unconfirmed ring.
+const peerEpochWatermarks = new Map();
+const PEER_EPOCH_TTL_MS = 30 * 60 * 1000;
+const RS_ACK_FLUSH_MS = 80;
+
+function savePeerWatermark(deviceId, ep, applied) {
+  if (!deviceId || !ep || !Number.isInteger(applied) || applied <= 0) return;
+  const now = Date.now();
+  peerEpochWatermarks.set(`${deviceId}::${ep}`, { applied, ts: now });
+  if (peerEpochWatermarks.size > 64) {
+    for (const [k, v] of peerEpochWatermarks) {
+      if (now - v.ts > PEER_EPOCH_TTL_MS) peerEpochWatermarks.delete(k);
+    }
+  }
+}
+
+function loadPeerWatermark(deviceId, ep) {
+  if (!deviceId || !ep) return 0;
+  const entry = peerEpochWatermarks.get(`${deviceId}::${ep}`);
+  if (!entry) return 0;
+  if (Date.now() - entry.ts > PEER_EPOCH_TTL_MS) {
+    peerEpochWatermarks.delete(`${deviceId}::${ep}`);
+    return 0;
+  }
+  return entry.applied;
+}
+
 /** Server ProtocolManager — per-client orchestrator. */
 export class ProtocolManager {
   constructor(socket, config) {
@@ -218,6 +247,8 @@ export class ProtocolManager {
     clearInterval(this._statsTimer);
     clearTimeout(this._deadTimer);
     this._deadTimer = null;
+    clearTimeout(this._rsAckTimer);
+    this._rsAckTimer = null;
     try { this._offGlobalSig?.(); } catch {}
     this._offGlobalSig = null;
     try { this._offGlobalReady?.(); } catch {}
@@ -433,13 +464,19 @@ export class ProtocolManager {
 
   /** One envelope on the best carrier, stamped with seq/epoch/watermark. */
   _sendOn(adapter, env) {
+    const appliedNow = this._intakeSeq.applied;
+    this._lastSentRs = appliedNow;
+    if (this._rsAckTimer) {
+      clearTimeout(this._rsAckTimer);
+      this._rsAckTimer = null;
+    }
     const wire = {
       event: env.event,
       args: env.args || [],
       ackId: env.ackId ?? null,
       sq: env.sq ?? null,
       ep: this._seqEpoch,
-      rs: this._intakeSeq.applied
+      rs: appliedNow
     };
     try {
       if (adapter.constructor.id === "ws") {
@@ -518,7 +555,33 @@ export class ProtocolManager {
     // stamp itself is the announcement (no peer ever sends a caps.seqCtl frame, so
     // waiting for one left the sequencer unarmed and every replayed envelope ran twice).
     if (Number.isInteger(env.sq) && !this._intakeSeq.armed) this._intakeSeq.arm();
+    if (Number.isInteger(env.sq) && env.ep && this._deviceId) {
+      const prevApplied = loadPeerWatermark(this._deviceId, env.ep);
+      if (prevApplied > this._intakeSeq.applied) {
+        this._intakeSeq.restoreWatermark(env.ep, prevApplied);
+      }
+    }
     this._intakeSeq.push(env);
+    if (Number.isInteger(env.sq) && env.ep && this._deviceId) {
+      savePeerWatermark(this._deviceId, env.ep, this._intakeSeq.applied);
+    }
+    if (Number.isInteger(env.sq) && !env.ackId && this._intakeSeq.applied > (this._lastSentRs || 0)) {
+      this._scheduleRsFlush();
+    }
+  }
+
+  _scheduleRsFlush() {
+    if (this._rsAckTimer || this._closed) return;
+    this._rsAckTimer = setTimeout(() => {
+      this._rsAckTimer = null;
+      if (this._closed || !this._peerSeqCtl) return;
+      if (this._intakeSeq.applied <= (this._lastSentRs || 0)) return;
+      const adapter = this._pickAdapter(CHANNELS.control);
+      if (adapter) {
+        this._sendOn(adapter, { event: STREAM_EVENTS.ACK, args: [], ackId: null, sq: null });
+      }
+    }, RS_ACK_FLUSH_MS);
+    this._rsAckTimer.unref?.();
   }
 
   _onCaps(caps) {

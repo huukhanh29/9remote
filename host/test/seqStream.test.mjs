@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { createOutboundLog, createIntake, STREAM_EVENTS } from "../transport/seqStream.js";
 import { encodeFrame, decodeFrame, encode, decode } from "../transport/codec.js";
+import { isDuplicateBatchInput } from "../features/terminal/handlers/InputHandler.js";
 
 let pass = 0, fail = 0;
 const tests = [];
@@ -201,6 +202,27 @@ test("codec: an old decoder ignores the new fields — envelope stays well-forme
   const header = JSON.parse(buf.subarray(4, 4 + headerLen).toString("utf8"));
   assert.equal(header.event, "e");
   assert.ok(Array.isArray(header.lens), "old header shape intact");
+});
+
+test("intake: restoreWatermark drops replayed envelopes from the same peer epoch after PM recreate", () => {
+  const { intake, delivered, gaps } = makeIntake();
+  intake.restoreWatermark("E1", 10);
+  intake.push({ event: "input", sq: 9, ep: "E1" });
+  intake.push({ event: "input", sq: 10, ep: "E1" });
+  assert.equal(delivered.length, 0, "replayed sq <= 10 dropped across PM recreate");
+  intake.push({ event: "input", sq: 11, ep: "E1" });
+  assert.equal(delivered.length, 1, "new sq=11 delivered normally");
+  assert.equal(gaps.length, 0);
+});
+
+test("input-dedupe: drops duplicate batch text and its trailing CR within window, keeps single keys", () => {
+  const sid = "session-dedupe-test";
+  assert.equal(isDuplicateBatchInput(sid, "git status", 1000), false);
+  assert.equal(isDuplicateBatchInput(sid, "\r", 1050), false, "first CR passes");
+  assert.equal(isDuplicateBatchInput(sid, "git status", 2500), true, "duplicate batch dropped");
+  assert.equal(isDuplicateBatchInput(sid, "\r", 2550), true, "trailing CR of duplicate batch dropped");
+  assert.equal(isDuplicateBatchInput(sid, "a", 2600), false, "single keystroke passes and resets memory");
+  assert.equal(isDuplicateBatchInput(sid, "git status", 2700), false, "after new typing, same text is allowed again");
 });
 
 await Promise.all(tests);

@@ -216,6 +216,17 @@ export function createIntake({ holdMax, gapDeadlineMs, deliver, requestGap, onLo
      *  count from the highest sq ever seen, so no false gap fires. */
     arm() { armed = true; applied = maxSeen; },
 
+    /** Restore watermark for a known peer epoch across a server-side PM recreate. */
+    restoreWatermark(ep, prevApplied) {
+      if (ep == null || !Number.isInteger(prevApplied) || prevApplied <= 0) return;
+      if (epoch !== null && epoch !== ep) return;
+      epoch = ep;
+      armed = true;
+      everSequenced = true;
+      if (prevApplied > applied) applied = prevApplied;
+      if (prevApplied > maxSeen) maxSeen = prevApplied;
+    },
+
     /** Inbound envelope (unwrapped, any carrier). */
     push(env) {
       applyEpoch(env?.ep);

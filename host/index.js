@@ -148,6 +148,15 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
         text = text.replaceAll("eg(e?{force:!0}:void 0)", "eg({force:!0})");
         changed = true;
       }
+      // Settle pending input acks immediately when host rs watermark confirms the sq was applied,
+      // preventing false 4s "Not sent" timeouts that paste already-sent messages back into the input box.
+      if (text.includes("Number.isInteger(n.rs)&&this._outLog.setApplied(n.rs)")) {
+        text = text.replace(
+          "Number.isInteger(n.rs)&&this._outLog.setApplied(n.rs)",
+          'Number.isInteger(n.rs)&&(this._outLog.setApplied(n.rs),this._ackReqs?.forEach((v,k)=>{"input"===v?.event&&Number.isInteger(v.sq)&&v.sq<=n.rs&&Z(this,k,[{ok:!0}])}))'
+        );
+        changed = true;
+      }
       if (changed) body = Buffer.from(text, "utf8");
     }
     if (ext === ".html" && filePath.startsWith(WEB_DIST) && !frameable) {

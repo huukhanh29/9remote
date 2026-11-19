@@ -167,7 +167,19 @@ export function dispatch(pm, event, payload, source) {
   }
   else env = { event, args: [payload], ackId: null };
   if (!env?.event) return;
-  if (Number.isInteger(env.rs)) pm._outLog.setApplied(env.rs);
+  if (Number.isInteger(env.rs)) {
+    pm._outLog.setApplied(env.rs);
+    // Any pending input request whose sq <= env.rs has already been received and
+    // applied by the host — settle its ack immediately so a 4s emitPromptAck timer
+    // never fires failSend() ("Not sent") and pastes the already-sent text back.
+    if (pm._ackReqs?.size) {
+      for (const [ackId, req] of [...pm._ackReqs.entries()]) {
+        if (req?.event === "input" && Number.isInteger(req.sq) && req.sq <= env.rs) {
+          resolveAck(pm, ackId, [{ ok: true }]);
+        }
+      }
+    }
+  }
   if (Number.isInteger(env.sq) && !pm._intakeSeq.armed && pm._peerSeqCtl) pm._intakeSeq.arm();
   pm._intakeSeq.push(env);
 }

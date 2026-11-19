@@ -243,7 +243,7 @@ export function createIntake({ holdMax, gapDeadlineMs, deliver, requestGap, onLo
         everSequenced = true;
         if (sq > applied + 1) applied = sq - 1;
       }
-      if (sq <= applied) { if (onDupe) onDupe(sq); return; }
+      if (sq <= applied) { if (onDupe) onDupe(sq, env); return; }
       if (sq === applied + 1) {
         applied++;
         deliver(env);

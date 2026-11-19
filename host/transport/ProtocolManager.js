@@ -94,7 +94,12 @@ export class ProtocolManager {
         this._seqStats.gaps++;
         logger.warn(`[seq] skip lost ${from}..${to} peer=${this._deviceId?.slice(0, 12) || "?"}`);
       },
-      onDupe: () => { this._seqStats.dupes++; }
+      onDupe: (sq, env) => {
+        this._seqStats.dupes++;
+        if (env?.ackId && (env.event === "input" || env.event === "ai:prompt" || env.event === "clipboard-attach")) {
+          this._sendAck(env.ackId, [{ ok: true, success: true, deduped: true }], env._src);
+        }
+      }
     });
   }
 
@@ -554,7 +559,13 @@ export class ProtocolManager {
     // A peer that speaks the stream is armed from its first stamped envelope — the
     // stamp itself is the announcement (no peer ever sends a caps.seqCtl frame, so
     // waiting for one left the sequencer unarmed and every replayed envelope ran twice).
-    if (Number.isInteger(env.sq) && !this._intakeSeq.armed) this._intakeSeq.arm();
+    if (wrapped || Number.isInteger(env.sq)) {
+      this._peerSeqCtl = true;
+      if (!this._intakeSeq.armed) this._intakeSeq.arm();
+    }
+    if (env.event === "caps") {
+      this._onCaps(env.args?.[0] ?? env);
+    }
     if (Number.isInteger(env.sq) && env.ep && this._deviceId) {
       const prevApplied = loadPeerWatermark(this._deviceId, env.ep);
       if (prevApplied > this._intakeSeq.applied) {
@@ -625,7 +636,7 @@ export class ProtocolManager {
         break;
     }
     const args = Array.isArray(env.args) ? [...env.args] : [];
-    if (env.ackId) args.push((...resp) => this._sendAck(env.ackId, resp));
+    if (env.ackId) args.push((...resp) => this._sendAck(env.ackId, resp, env._src));
     // HostBus (virtual) is always manual; a real socket.io socket dispatched
     // plain WS events itself — only RTC/__env-carried ones need the handoff.
     if (env._manual || this._host?.dispatchAny) {
@@ -639,7 +650,7 @@ export class ProtocolManager {
           logger.warn(`[seq] drop unapproved event=${env.event} peer=${this._deviceId?.slice(0, 12) || "?"} conn=${conn?.state || "none"}`);
           // A request waits on its ack — say why instead of leaving it to time out,
           // and tell the peer once so it re-admits instead of sending into a closed gate.
-          if (env.ackId) this._sendAck(env.ackId, [{ ok: false, success: false, error: NOT_ADMITTED }]);
+          if (env.ackId) this._sendAck(env.ackId, [{ ok: false, success: false, error: NOT_ADMITTED }], env._src);
           if (conn?.closed) this._noteNotAdmitted();
           return;
         }
@@ -691,9 +702,18 @@ export class ProtocolManager {
 
   /** Ack for an inbound request. Sequenced like everything else, so a carrier
    *  dying mid-answer re-sends it instead of leaving the peer to time out. */
-  _sendAck(ackId, resp) {
+  _sendAck(ackId, resp, srcCarrier = null) {
+    const normArgs = Array.isArray(resp) ? resp : [resp];
+    // Immediate unsequenced (sq: null) fast-ack on the carrier that delivered the
+    // request so the client's 4s emitPromptAck timer resolves immediately without
+    // waiting behind any terminal output gap or dying RTC lane.
+    const same = srcCarrier && this._adapters.get(srcCarrier)?.ready ? this._adapters.get(srcCarrier) : null;
+    const fastAdapter = same || this._pickAdapter(CHANNELS.control);
+    if (fastAdapter) {
+      this._sendOn(fastAdapter, { event: STREAM_EVENTS.ACK, args: normArgs, ackId, sq: null });
+    }
     // args = resp spread, matching the old __ack wire shape (cb(...resp)).
-    this._outLog.append({ event: STREAM_EVENTS.ACK, args: Array.isArray(resp) ? resp : [resp], ackId });
+    this._outLog.append({ event: STREAM_EVENTS.ACK, args: normArgs, ackId });
     this._ship();
   }
 

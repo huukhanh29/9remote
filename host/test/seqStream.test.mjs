@@ -204,12 +204,15 @@ test("codec: an old decoder ignores the new fields — envelope stays well-forme
   assert.ok(Array.isArray(header.lens), "old header shape intact");
 });
 
-test("intake: restoreWatermark drops replayed envelopes from the same peer epoch after PM recreate", () => {
-  const { intake, delivered, gaps } = makeIntake();
+test("intake: restoreWatermark drops replayed envelopes from the same peer epoch after PM recreate and passes env to onDupe", () => {
+  const dupedEnvs = [];
+  const { intake, delivered, gaps } = makeIntake({ onDupe: (sq, env) => dupedEnvs.push({ sq, env }) });
   intake.restoreWatermark("E1", 10);
-  intake.push({ event: "input", sq: 9, ep: "E1" });
-  intake.push({ event: "input", sq: 10, ep: "E1" });
+  intake.push({ event: "input", sq: 9, ep: "E1", ackId: "c_9" });
+  intake.push({ event: "input", sq: 10, ep: "E1", ackId: "c_10" });
   assert.equal(delivered.length, 0, "replayed sq <= 10 dropped across PM recreate");
+  assert.equal(dupedEnvs.length, 2, "onDupe fired for both replayed envelopes");
+  assert.equal(dupedEnvs[0].env.ackId, "c_9", "onDupe receives full envelope so host can re-ack");
   intake.push({ event: "input", sq: 11, ep: "E1" });
   assert.equal(delivered.length, 1, "new sq=11 delivered normally");
   assert.equal(gaps.length, 0);

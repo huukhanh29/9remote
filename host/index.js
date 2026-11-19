@@ -117,7 +117,7 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
     // Hashed build assets are immutable; everything else (HTML, RSC .txt) must
     // revalidate or a stale bundle keeps running after an agent update.
     const isWebJs = ext === ".js" && filePath.startsWith(WEB_DIST);
-    const isPatchedChunk = isWebJs && (filePath.includes("8126-") || filePath.includes("layout-"));
+    const isPatchedChunk = isWebJs && (filePath.includes("8126-") || filePath.includes("layout-") || filePath.includes("ab6c8a12-"));
     const immutable = !isPatchedChunk && filePath.includes(`${sep}_next${sep}static${sep}`);
     // A caller that already decided this file's caching (the sites host) keeps it.
     if (!res.hasHeader("Cache-Control")) {
@@ -134,6 +134,12 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
       // Fix TUI cursor jumping / missing characters in agy (cud1=\n broken by convertEol:true)
       if (text.includes("convertEol:!0")) {
         text = text.replaceAll("convertEol:!0", "convertEol:!1");
+        changed = true;
+      }
+      // Keep bracketedPasteMode on by default across term.reset() so pasting into xterm
+      // always wraps in \x1b[200~...\x1b[201~ and collapses into [Pasted text #1 +N lines]
+      if (text.includes("bracketedPasteMode:!1")) {
+        text = text.replace("bracketedPasteMode:!1", "bracketedPasteMode:!0");
         changed = true;
       }
       // Always force-emit real pane cols/rows on desktop focus so a session shrunk to 50 cols

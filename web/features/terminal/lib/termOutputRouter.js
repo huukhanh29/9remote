@@ -44,6 +44,7 @@ export function createOutputRouter({ sessionId, term, writeBatcherRef, gapFetch,
     refs.historyBytesRef.current += chunkLen;
 
     term.reset();
+    term.write("\x1b[20l\x1b[?2004h");
     term.write(decodeMirror(refs.historyMirrorRef.current), () => {
       requestAnimationFrame(() => {
         // delta < 0 → scroll back up to the user's prior position via xterm's normal

@@ -184,37 +184,42 @@ export function setupInputHandlers(socket, sessions) {
     }
     trackLaunchLine(sessionId, data);
 
-    // Wrap multi-line text payloads in Bracketed Paste (\x1b[200~...\x1b[201~) so TUI agents
-    // like `agy` treat internal newlines as a single multi-line message instead of submitting
-    // the first line immediately and queueing subsequent lines as separate turns.
+    // Wrap pasted/batch text payloads in Bracketed Paste (\x1b[200~...\x1b[201~) so TUI agents
+    // (`agy`, `claude`) receive a single `PasteMsg` and immediately collapse long pastes into
+    // `[Pasted text #1 +N lines]` / `[Pasted text #1 N chars]` instead of typing thousands of
+    // individual keystrokes line-by-line or splitting lines into separate queued turns.
     let writePayload = strData;
-    let delayedEnter = false;
-    if (
-      typeof strData === "string" &&
-      strData.length > 1 &&
-      !strData.startsWith("\x1b") &&
-      /[\r\n]/.test(strData.replace(/[\r\n]+$/, ""))
-    ) {
-      delayedEnter = /[\r\n]$/.test(strData);
-      const body = strData.replace(/[\r\n]+$/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      writePayload = `\x1b[200~${body}\x1b[201~`;
+    if (typeof strData === "string" && strData.length > 1) {
+      if (strData.startsWith("\x1b[200~") && strData.endsWith("\x1b[201~")) {
+        const inner = strData
+          .slice(6, -6)
+          .replace(/[\r\n]+$/, "")
+          .replace(/\r\n/g, "\r")
+          .replace(/\n/g, "\r");
+        writePayload = `\x1b[200~${inner}\x1b[201~`;
+      } else if (!strData.startsWith("\x1b")) {
+        const hasInternalNewline = /[\r\n]/.test(strData.slice(0, -1));
+        const isShortSingleLineStartupCmd =
+          !hasInternalNewline && strData.endsWith("\r") && strData.length < 40;
+        if (!isShortSingleLineStartupCmd && (hasInternalNewline || strData.length > 8)) {
+          const body = strData
+            .replace(/[\r\n]+$/, "")
+            .replace(/\r\n/g, "\r")
+            .replace(/\n/g, "\r");
+          writePayload = `\x1b[200~${body}\x1b[201~`;
+        }
+      }
     }
 
     if (session.daemon && daemonClient.isConnected()) {
       // sendInput is fire-and-forget over the unix socket: a truthy return means the
       // write was accepted — the strongest landed-signal this path can give.
       const written = daemonClient.sendInput(sessionId, writePayload);
-      if (written && delayedEnter) {
-        setTimeout(() => daemonClient.sendInput(sessionId, "\r"), 40);
-      }
       return cb?.(written ? { ok: true } : { ok: false, error: "daemon-write-failed" });
     }
     if (session.pty) {
       try {
         session.pty.write(writePayload);
-        if (delayedEnter) {
-          setTimeout(() => { try { session.pty.write("\r"); } catch {} }, 40);
-        }
         cb?.({ ok: true });
       } catch (e) {
         return cb?.({ ok: false, error: e?.message || "write-failed" });

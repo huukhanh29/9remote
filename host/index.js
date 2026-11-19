@@ -155,7 +155,8 @@ function unwrap(raw){
     }
     var pInd=prev.length-prevTrim.length,cInd=currRaw.length-currTrim.length;
     var hasBul=/^[●•⎿✦◆▪▸-]\\s+/.test(prevTrim),endsPunct=/[.!?;:]$/.test(prevTrim);
-    if((cInd>=2&&(cInd===pInd||hasBul))||(!endsPunct&&LOWER_RE.test(currTrim))){
+    var isCmdCont=!endsPunct&&(/^(--[a-zA-Z0-9][\\w-]*|-[a-zA-Z0-9]+\\b|&&|\\|\\||~\\/|\\.\\.?\\/|\\/[a-zA-Z0-9._-]+|["'\`])/.test(currTrim)||/[|=\\\\]$/.test(prevTrim)||/\\s(-[a-zA-Z0-9]+|--[a-zA-Z0-9-]+)$/.test(prevTrim));
+    if((cInd>=2&&(cInd===pInd||hasBul))||(!endsPunct&&LOWER_RE.test(currTrim))||isCmdCont){
       out[out.length-1]=prev+" "+currTrim;continue;
     }
     out.push(currRaw);

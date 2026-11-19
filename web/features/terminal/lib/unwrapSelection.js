@@ -6,6 +6,8 @@ const CODE_OR_LOG_START_RE = /^(\d{4}-\d{2}-\d{2}[T\s]|\[(INFO|WARN|ERROR|DEBUG)
 const PATH_OR_URL_TOKEN_RE = /^(https?:\/\/[^\s]+|~\/[^\s]*|\/[^\s]+|\.\.?\/[^\s]*|[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]*)$/;
 const PATH_CONT_TOKEN_RE = /^[a-zA-Z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/;
 const LOWER_START_RE = /^[a-zàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/;
+// CLI flags, quoted args, pipes/logical operators, or path args continuing a wrapped command line
+const CMD_ARG_CONT_RE = /^(--[a-zA-Z0-9][\w-]*|-[a-zA-Z0-9]+\b|&&|\|\||~\/|\.\.?\/|\/[a-zA-Z0-9._-]+|["'`])/;
 
 export function unwrapTerminalSelection(rawText) {
   if (typeof rawText !== "string" || !rawText.includes("\n")) return rawText;
@@ -64,8 +66,13 @@ export function unwrapTerminalSelection(rawText) {
 
     const isTuiIndentedWrap = (currIndent >= 2 && (currIndent === prevIndent || prevHasTuiBullet));
     const isLowerContinuation = !prevEndsTerminalPunct && LOWER_START_RE.test(currTrim);
+    const isCmdContinuation = !prevEndsTerminalPunct && (
+      CMD_ARG_CONT_RE.test(currTrim) ||
+      /[|=\\]$/.test(prevTrim) ||
+      /\s(-[a-zA-Z0-9]+|--[a-zA-Z0-9-]+)$/.test(prevTrim)
+    );
 
-    if (isTuiIndentedWrap || isLowerContinuation) {
+    if (isTuiIndentedWrap || isLowerContinuation || isCmdContinuation) {
       out[out.length - 1] = `${prev} ${currTrim}`;
       continue;
     }

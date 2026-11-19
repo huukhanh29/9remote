@@ -133,56 +133,135 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
       const html = body.toString("utf8");
       if (html.includes("</body>") && !html.includes("__9remoteSmartUnwrap")) {
         const unwrapScript = `<script id="__9remoteSmartUnwrap">(function(){
-var LIST_RE=/^([-*•❯>$#]\\s+|\\d+[.)]\\s+|[┌┬┐├┼┤└┴┘╭╮╰╯│═─]+|\\|\\s+|>>>\\s+|\\.\\.\\.\\s+)/;
-var CODE_RE=/^(\\d{4}-\\d{2}-\\d{2}[T\\s]|\\[(INFO|WARN|ERROR|DEBUG)\\]|(import|export|const|let|var|function|class|return|if|for|while|switch|case|def|async|await)\\b)/;
+var LIST_RE=/^([-*•❯>$#]\\s+|\\d+[.)]\\s+|[┌┬┐├┼┤└┴┘╭╮╰╯═─]{2,}|>>>\\s+)/;
 var PATH_RE=/^(https?:\\/\\/[^\\s]+|~\\/[^\\s]*|\\/[^\\s]+|\\.\\.?\\/[^\\s]*|[a-zA-Z0-9_.-]+\\/[a-zA-Z0-9_./-]*)$/;
 var CONT_RE=/^[a-zA-Z0-9._~:/?#[\\]@!$&'()*+,;=%-]+$/;
-var LOWER_RE=/^[a-zàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/;
+function cleanLine(l){
+  return l.replace(/[ \\t]+$/,"").replace(/^[ \\t]*[│┃┆┊][ \\t]?/,"").replace(/[ \\t]?[│┃┆┊][ \\t]*$/,"");
+}
 function unwrap(raw){
   if(typeof raw!=="string"||raw.indexOf("\\n")===-1)return raw;
-  var lines=raw.replace(/\\r\\n/g,"\\n").split("\\n").map(function(l){return l.replace(/[ \\t]+$/,"");});
+  var lines=raw.replace(/\\r\\n/g,"\\n").split("\\n").map(cleanLine);
   if(lines.length<=1)return raw;
   var out=[lines[0]];
   for(var i=1;i<lines.length;i++){
     var prev=out[out.length-1],currRaw=lines[i],currTrim=currRaw.trimStart(),prevTrim=prev.trimStart();
     if(!prevTrim||!currTrim){out.push(currRaw);continue;}
-    if(LIST_RE.test(currTrim)||CODE_RE.test(currTrim)){out.push(currRaw);continue;}
+    if(LIST_RE.test(currTrim)){out.push(currRaw);continue;}
     if(prev.slice(-2)===" \\\\"){out[out.length-1]=prev.slice(0,-1)+currTrim;continue;}
     var pToks=prevTrim.split(/\\s+/),lastTok=pToks[pToks.length-1]||"",firstTok=currTrim.split(/\\s+/)[0]||"";
     var isNew=/^(https?:\\/\\/|\\/home\\/|\\/Users\\/|~\\/)/.test(firstTok);
-    if(PATH_RE.test(lastTok)&&CONT_RE.test(firstTok)&&!isNew&&currTrim.split(/\\s+/).length===1){
+    if(PATH_RE.test(lastTok)&&CONT_RE.test(firstTok)&&!isNew&&firstTok.charAt(0)!=="-"&&(lastTok.slice(-1)==="/"||lastTok.slice(-1)==="-"||lastTok.slice(-1)==="_"||currTrim.indexOf(" ")===-1)){
       out[out.length-1]=prev+currTrim;continue;
     }
-    var pInd=prev.length-prevTrim.length,cInd=currRaw.length-currTrim.length;
-    var hasBul=/^[●•⎿✦◆▪▸-]\\s+/.test(prevTrim),endsPunct=/[.!?;:]$/.test(prevTrim);
-    var isCmdCont=!endsPunct&&(/^(--[a-zA-Z0-9][\\w-]*|-[a-zA-Z0-9]+\\b|&&|\\|\\||~\\/|\\.\\.?\\/|\\/[a-zA-Z0-9._-]+|["'\`])/.test(currTrim)||/[|=\\\\]$/.test(prevTrim)||/\\s(-[a-zA-Z0-9]+|--[a-zA-Z0-9-]+)$/.test(prevTrim));
-    if((cInd>=2&&(cInd===pInd||hasBul))||(!endsPunct&&LOWER_RE.test(currTrim))||isCmdCont){
-      out[out.length-1]=prev+" "+currTrim;continue;
-    }
-    out.push(currRaw);
+    out[out.length-1]=prev+" "+currTrim;
   }
-  return out.join("\\n");
+  return out.join("\\n").trim();
 }
 window.__9remoteUnwrapCopy=unwrap;
-document.addEventListener("copy",function(e){
-  var el=document.activeElement;
-  if(!el||!el.closest||!el.closest(".xterm"))return;
-  var sel=window.getSelection?String(window.getSelection()):"";
-  if(!sel&&e.clipboardData)sel=e.clipboardData.getData("text/plain")||"";
-  if(sel&&sel.indexOf("\\n")!==-1&&e.clipboardData){
-    var u=unwrap(sel);
-    if(u!==sel){e.clipboardData.setData("text/plain",u);e.preventDefault();}
-  }
-},true);
-if(navigator.clipboard&&navigator.clipboard.writeText){
-  var orig=navigator.clipboard.writeText.bind(navigator.clipboard);
-  navigator.clipboard.writeText=function(t){
-    if(typeof t==="string"&&t.indexOf("\\n")!==-1&&document.querySelector(".xterm")){
-      t=unwrap(t);
+var probing=false,keepRawOnce=false;
+
+// 1. Intercept DataTransfer.prototype.setData (used directly by xterm.js on copy)
+if(typeof DataTransfer!=="undefined"&&DataTransfer.prototype.setData){
+  var origSetData=DataTransfer.prototype.setData;
+  DataTransfer.prototype.setData=function(fmt,data){
+    if(!probing&&!keepRawOnce&&(fmt==="text/plain"||fmt==="text")&&typeof data==="string"&&data.indexOf("\\n")!==-1){
+      var el=document.activeElement;
+      if(!el||el.classList.contains("xterm-helper-textarea")||(el.closest&&el.closest(".xterm"))){
+        data=unwrap(data);
+      }
     }
-    return orig(t);
+    return origSetData.call(this,fmt,data);
   };
 }
+
+// 2. Intercept navigator.clipboard.writeText
+var origWriteText=navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText.bind(navigator.clipboard):null;
+function writeClip(text,rawMode){
+  var final=rawMode?text:unwrap(text);
+  if(origWriteText){return origWriteText(final).catch(function(){fallbackCopy(final);});}
+  fallbackCopy(final);
+  return Promise.resolve();
+}
+function fallbackCopy(text){
+  var ta=document.createElement("textarea");
+  ta.value=text;ta.style.position="fixed";ta.style.opacity="0";
+  document.body.appendChild(ta);ta.select();
+  keepRawOnce=true;try{document.execCommand("copy");}catch(e){}keepRawOnce=false;
+  document.body.removeChild(ta);
+}
+if(origWriteText){
+  navigator.clipboard.writeText=function(t){
+    if(!keepRawOnce&&typeof t==="string"&&t.indexOf("\\n")!==-1&&document.querySelector(".xterm")){
+      t=unwrap(t);
+    }
+    return origWriteText(t);
+  };
+}
+
+// 3. Floating "Copy 1 dòng" / "Copy giữ dòng" pill on mouse selection inside .xterm
+var bar=null,hideTimer=null,lastSelText="";
+function ensureBar(){
+  if(bar)return bar;
+  bar=document.createElement("div");
+  bar.id="__9remoteCopyBar";
+  bar.style.cssText="position:fixed;z-index:99999;display:none;gap:4px;padding:4px;border-radius:8px;background:rgba(24,24,30,0.95);border:1px solid rgba(255,255,255,0.16);box-shadow:0 6px 20px rgba(0,0,0,0.45);font-family:system-ui,sans-serif;font-size:12px;color:#fff;user-select:none;backdrop-filter:blur(8px);";
+  var btn1=document.createElement("button");
+  btn1.textContent="📋 Copy 1 dòng";
+  btn1.style.cssText="padding:4px 8px;border-radius:5px;background:#e68a6e;color:#111;font-weight:600;border:none;cursor:pointer;";
+  btn1.onmousedown=function(e){e.preventDefault();e.stopPropagation();};
+  btn1.onclick=function(e){
+    e.preventDefault();e.stopPropagation();
+    if(!lastSelText)return;
+    writeClip(lastSelText,false);
+    btn1.textContent="✓ Đã copy 1 dòng";
+    setTimeout(function(){hideBar();btn1.textContent="📋 Copy 1 dòng";},700);
+  };
+  var btn2=document.createElement("button");
+  btn2.textContent="Giữ dòng";
+  btn2.style.cssText="padding:4px 7px;border-radius:5px;background:rgba(255,255,255,0.1);color:#ddd;border:none;cursor:pointer;";
+  btn2.onmousedown=function(e){e.preventDefault();e.stopPropagation();};
+  btn2.onclick=function(e){
+    e.preventDefault();e.stopPropagation();
+    if(!lastSelText)return;
+    keepRawOnce=true;writeClip(lastSelText,true).finally(function(){keepRawOnce=false;});
+    btn2.textContent="✓ Đã copy";
+    setTimeout(function(){hideBar();btn2.textContent="Giữ dòng";},700);
+  };
+  bar.appendChild(btn1);bar.appendChild(btn2);
+  document.body.appendChild(bar);
+  return bar;
+}
+function hideBar(){if(bar)bar.style.display="none";lastSelText="";}
+function probeXtermSelection(xtermEl){
+  try{
+    var ta=xtermEl.querySelector(".xterm-helper-textarea");
+    if(!ta)return "";
+    var dt=new DataTransfer();
+    probing=true;
+    var ev=new ClipboardEvent("copy",{clipboardData:dt,bubbles:true,cancelable:true});
+    ta.dispatchEvent(ev);
+    probing=false;
+    return dt.getData("text/plain")||"";
+  }catch(e){probing=false;return "";}
+}
+document.addEventListener("mouseup",function(e){
+  if(bar&&bar.contains(e.target))return;
+  var xtermEl=e.target&&e.target.closest?e.target.closest(".xterm"):null;
+  if(!xtermEl){hideBar();return;}
+  setTimeout(function(){
+    var sel=probeXtermSelection(xtermEl);
+    if(!sel||!sel.trim()){hideBar();return;}
+    lastSelText=sel;
+    var b=ensureBar();
+    var x=Math.min(window.innerWidth-210,Math.max(8,e.clientX-40));
+    var y=Math.max(8,e.clientY-44);
+    b.style.left=x+"px";b.style.top=y+"px";b.style.display="flex";
+    clearTimeout(hideTimer);
+    hideTimer=setTimeout(hideBar,8000);
+  },30);
+},true);
+document.addEventListener("keydown",function(e){if(e.key==="Escape")hideBar();},true);
 })();</script>`;
         body = Buffer.from(html.replace("</body>", `${unwrapScript}</body>`), "utf8");
       }

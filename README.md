@@ -1,5 +1,48 @@
 # 9Remote — Remote Everything, Vibecode Everywhere
 
+## Bản Fork Local (Chống gửi trùng tin nhắn & Chạy song song cổng 2200)
+
+Bản này đã vá lỗi tự gửi lại tin nhắn trước đó khi mạng/WebSocket reconnect (bảo toàn watermark `applied` theo `(deviceId, epoch)`, chủ động đẩy `rs` watermark sau khi nhận `input`, và dedupe batch input trong `InputHandler.js`), đồng thời hỗ trợ chạy một instance thứ 2 độc lập hoàn toàn ở cổng **`2200`** song song với bản mặc định ở cổng **`2208`**.
+
+### 1. Cài đặt chỉ với 1 lệnh sau khi clone (Linux / macOS / Windows)
+
+Trên bất kỳ máy nào (đã có Node.js >= 18), chỉ cần clone về và chạy:
+
+```bash
+git clone https://github.com/huukhanh29/9remote.git
+cd 9remote
+npm run local:setup
+```
+
+Lệnh `npm run local:setup` sẽ tự động:
+1. Kiểm tra và cài `9remote` + `esbuild` global nếu máy chưa có.
+2. Bundle nhanh bản đã vá (`host/dist`) và cập nhật luôn cho cả bản global (cổng `2208`).
+3. Cài đặt dịch vụ chạy ngầm **tự động bật lại mỗi khi reset/khởi động máy** cho bản cổng **`2200`** (dữ liệu tách riêng tại `~/.9remote-2200`, có `ptyDaemon`, Key `sk-...` và tunnel riêng):
+   - **Linux:** tạo và bật `~/.config/systemd/user/9remote-2200.service` (`systemd --user`).
+   - **macOS:** tạo và nạp `~/Library/LaunchAgents/cc.9remote.local2200.plist` (`launchctl`).
+   - **Windows:** tạo script khởi động ngầm trong thư mục Startup (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\9remote-2200.vbs`) và chạy ngay.
+
+### 2. Cách sử dụng & Quản lý trên mọi máy
+
+- **Mở trực tiếp trên máy đang chạy (0ms lag, tự đăng nhập):**
+  - Bản cổng `2200` (riêng biệt): `http://localhost:2200/workspace`
+  - Bản cổng `2208` (mặc định): `http://localhost:2208/workspace`
+- **Kết nối từ điện thoại / máy khác qua `https://9remote.cc`:**
+  - Xem Key `sk-...` riêng của bản `2200` trong file `~/.9remote-2200/keys.json` (Windows: `%USERPROFILE%\.9remote-2200\keys.json`).
+  - Nhập Key đó vào `https://9remote.cc/login` rồi bấm **Approve** trên `http://localhost:2200/workspace`.
+- **Các lệnh quản lý chung (dùng giống nhau trên Linux, macOS, Windows):**
+  ```bash
+  npm run local:status    # Kiểm tra trạng thái cổng 2200 & 2208
+  npm run local:restart   # Bundle lại code mới sửa & khởi động lại dịch vụ
+  npm run local:stop      # Tắt dịch vụ cổng 2200
+  ```
+- **Lệnh riêng theo từng hệ điều hành (nếu muốn thao tác tay):**
+  - **Linux:** `systemctl --user status|restart|stop 9remote-2200.service` (xem QR/log: `journalctl --user -u 9remote-2200.service -n 35 --no-pager`)
+  - **macOS:** `launchctl list | grep cc.9remote.local2200` (xem log: `tail -n 35 ~/.9remote-2200/logs/launchd.log`)
+  - **Windows (PowerShell):** `wscript "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\9remote-2200.vbs"`
+
+---
+
 Your entire dev workstation in your pocket. A remote IDE, 60fps desktop stream, visual file explorer, live mobile emulator, zero-config localhost preview, and every AI harness in one UI — Claude Code, Codex, Gemini CLI & 30+ agents — on PC, Web, iPad, or phone.
 
 > **Codex CLI looks like 1995? Claude Code's TUI hurts? Forget them.** Same agents, one UI you'll actually love.

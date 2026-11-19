@@ -399,7 +399,13 @@ export function setupTerminalSocket(io, apiKey) {
       // Decoded once at ingest — from here to the wire the canonical form is a
       // Buffer. Peers that never announced caps.binOut are downgraded to b64 at
       // the send door (PM), not here: emit-time does not know who is listening.
-      const raw = enc === "b64" ? Buffer.from(data, "base64") : Buffer.from(data || "");
+      let raw = enc === "b64" ? Buffer.from(data, "base64") : Buffer.from(data || "");
+      // Prepend ANSI Mode 20 Reset (\x1b[20l -> convertEol=false in xterm.js) on replay or
+      // synchronized TUI frames (\x1b[?2026h) so TUI apps like `agy` using bare LF (cud1=\n)
+      // for same-column cursor-down never get their cursor yanked to column 0, even on 9remote.cc.
+      if (replay === true || raw.includes("\x1b[?2026h")) {
+        raw = Buffer.concat([Buffer.from("\x1b[20l", "utf8"), raw]);
+      }
       if (raw.length > OUTPUT_SLICE_BYTES) {
         slicedChunks++;
         if (slicedChunks === 1 || slicedChunks % 500 === 0) {
@@ -409,17 +415,27 @@ export function setupTerminalSocket(io, apiKey) {
       // Title-based agent detection (works for replay too — same session, same CLI).
       // Scan the FULL chunk before slicing — a slice boundary could cut an OSC sequence.
       if (enc === "b64") scanTitleForAgent(sessionId, raw.toString("utf8"));
-      // Fragment at the source: one event per OUTPUT_SLICE_BYTES so every chunk fits one
-      // SCTP message on the RTC control DC. Each slice is a complete event — clients
-      // append in order, so no reassembly is needed for live/replay output.
-      for (let off = 0; off < raw.length || off === 0; off += OUTPUT_SLICE_BYTES) {
-        const piece = raw.subarray(off, off + OUTPUT_SLICE_BYTES);
-        // Live advances the seq (per slice, contiguous — gap detection stays exact);
-        // replay (rejoin tail) snapshots the current seq so the client can resync
-        // after a reset+replay without a false gap.
+      // Fragment at the source on clean ANSI/UTF-8 boundaries so multi-slice TUI redraws
+      // never split an ESC sequence (\x1b[row;colH) or multi-byte Vietnamese UTF-8 char.
+      let off = 0;
+      while (off < raw.length || off === 0) {
+        let end = Math.min(off + OUTPUT_SLICE_BYTES, raw.length);
+        if (end < raw.length) {
+          // Walk back up to 64 bytes if we landed mid-ANSI or mid-UTF8 continuation byte
+          const floor = Math.max(off + 1, end - 64);
+          for (let k = end - 1; k >= floor; k--) {
+            const b = raw[k];
+            if (b === 0x1b) { end = k; break; }
+            if ((b & 0xc0) === 0xc0) { end = k; break; } // start of multi-byte UTF-8
+            if (b < 0x80 && b >= 0x40 && raw[k - 1] !== 0x1b) break; // safe ASCII terminator
+          }
+        }
+        const piece = raw.subarray(off, end);
+        off = end || raw.length;
         const seq = replay === true ? currentSeq(sessionId) : nextSeq(sessionId);
-        if (replay !== true) cacheChunk(sessionId, seq, piece); // plan G: recover gaps without a flash
+        if (replay !== true) cacheChunk(sessionId, seq, piece);
         broadcast(io, "output", { sessionId, enc: "bin", data: piece, replay: replay === true, seq });
+        if (off >= raw.length) break;
       }
     });
 

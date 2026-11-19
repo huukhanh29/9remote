@@ -9,7 +9,7 @@ import { createLogger } from "../../lib/logger.js";
 import { computeDelay } from "./backoff.js";
 
 const logger = createLogger("tunnel");
-import { RETRY_CONFIG, SERVER_PORT } from "../../lib/constants.js";
+import { RETRY_CONFIG, SERVER_PORT, PATHS } from "../../lib/constants.js";
 import { probeTunnelOnce } from "./dnsProbe.js";
 import { setLastStatus } from "./tunnelHealth.js";
 
@@ -103,7 +103,7 @@ let edgeFailStreak = 0;
 const NETWORK_CHANGE_COOLDOWN_MS = 30000;
 const SCHEDULE_DEBOUNCE_MS = 5000;
 
-const BIN_DIR = path.join(os.homedir(), ".9remote", "bin");
+const BIN_DIR = PATHS.BIN;
 const BINARY_NAME = "cloudflared";
 const IS_WINDOWS = os.platform() === "win32";
 const BIN_NAME = IS_WINDOWS ? `${BINARY_NAME}.exe` : BINARY_NAME;
@@ -577,14 +577,18 @@ export function parsePsOutput(out) {
   });
 }
 
-// Match only cloudflared launched from our binary with 'tunnel' subcommand.
-export function pickStalePids(procs, binaryPath) {
+// Match only cloudflared launched from our binary with 'tunnel' subcommand for this instance's port.
+export function pickStalePids(procs, binaryPath, localPort = SERVER_PORT) {
   if (!Array.isArray(procs)) return [];
   return procs
     .filter((p) => {
       if (!p?.args || typeof p.pid !== "number") return false;
       const argv = p.args.split(/\s+/);
-      return argv.includes(binaryPath) && argv.includes("tunnel");
+      if (!argv.includes(binaryPath) || !argv.includes("tunnel")) return false;
+      if (localPort && p.args.includes("http://localhost:") && !p.args.includes(`http://localhost:${localPort}`)) {
+        return false;
+      }
+      return true;
     })
     .map((p) => p.pid);
 }

@@ -81,6 +81,14 @@ function linkSharedWorkspacesAndDaemon() {
 
   fs.mkdirSync(path.join(NREMOTE_HOME, "state"), { recursive: true });
   fs.mkdirSync(path.join(NREMOTE_HOME, "pids"), { recursive: true });
+  fs.mkdirSync(path.join(NREMOTE_HOME, "config"), { recursive: true });
+
+  // Disable second cloudflared quick-tunnel on port 2200 by default so it doesn't
+  // trigger Cloudflare trycloudflare.com 429 rate-limit against the main 2208 tunnel.
+  const settingsFile = path.join(NREMOTE_HOME, "config", "settings.json");
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(settingsFile, JSON.stringify({ remoteEnabled: false }, null, 2), "utf-8");
+  }
 
   // Share PTY daemon socket, daemon runtime, AI sessions, and workspace/session state files
   linkSharedItem(path.join(baseHome, "pty-daemon.sock"), path.join(NREMOTE_HOME, "pty-daemon.sock"));
@@ -137,6 +145,7 @@ WantedBy=default.target
   run(`systemctl --user restart 9remote-${PORT}.service`);
   try {
     execSync("systemctl --user is-active 9remote.service", { stdio: "ignore" });
+    execSync("sleep 4");
     run("systemctl --user restart 9remote.service");
   } catch {}
   console.log(`✅ Linux systemd service enabled & started: 9remote-${PORT}.service`);

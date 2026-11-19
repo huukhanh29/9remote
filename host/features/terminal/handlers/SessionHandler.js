@@ -1,6 +1,7 @@
 import pty from "node-pty";
 import * as daemonClient from "../ptyDaemonClient.js";
 import { getDefaultShell, getDefaultCwd, buildShellEnv, saveSessionBuffer, loadSessionBuffer, deleteSessionBuffer, loadSessionMetadata, loadWorkspaces, saveSessionMetadata, saveWorkspaces, loadSessionNote, saveSessionNote, deleteSessionNote, UPLOAD_DIR } from "../ptyHelper.js";
+import { setupInputHandlers, recordSocketSessionSize } from "./InputHandler.js";
 import { PATHS } from "../../../lib/constants.js";
 import { resolveShell, getShellList, SESSION_NAME_MAX, AUTO_NAME_RE, OUTPUT_SLICE_BYTES } from "../constants.js";
 import { createLogger } from "../../../lib/logger.js";
@@ -616,6 +617,15 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
         session = { daemon: true, name: autoName, createdAt: Date.now(), cwd: created.cwd, shellId: created.shellId, shellLabel: created.shellLabel, lastCols: cols, lastRows: rows };
         sessions.set(sessionId, session);
         saveSessionMetadata(sessions);
+        if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
+          recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
+          if (joinCols >= (session.lastCols ?? 0) && (joinCols !== session.lastCols || joinRows !== session.lastRows)) {
+            session.lastCols = joinCols;
+            session.lastRows = joinRows;
+            daemonClient.resizeSession(sessionId, joinCols, joinRows);
+            saveSessionMetadata(sessions);
+          }
+        }
         const result = await daemonClient.joinSession(sessionId);
         return callback({ success: result.success, name: session.name, cwd: result.cwd || session.cwd, recreated: true, error: result.error });
       } catch (e) {
@@ -638,6 +648,15 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
           session.lastCols = cols;
           session.lastRows = rows;
           saveSessionMetadata(sessions);
+        }
+        if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
+          recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
+          if (joinCols >= (session.lastCols ?? 0) && (joinCols !== session.lastCols || joinRows !== session.lastRows)) {
+            session.lastCols = joinCols;
+            session.lastRows = joinRows;
+            daemonClient.resizeSession(sessionId, joinCols, joinRows);
+            saveSessionMetadata(sessions);
+          }
         }
         const result = await daemonClient.joinSession(sessionId);
         // Persist live cwd (user may have cd'd) — agent is source of truth

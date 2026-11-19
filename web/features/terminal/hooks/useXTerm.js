@@ -763,9 +763,8 @@ export function useXTerm({ bus: propBus, sessionId, theme, terminalTheme, isVisi
 
   useEffect(() => {
     if (!isFocused) return;
-    const mobile = typeof window !== "undefined" && window.innerWidth < 760;
     const timer = setTimeout(() => {
-      doResize(mobile ? { force: true } : undefined);
+      doResize({ force: true });
       requestAnimationFrame(() => termRef.current?.refresh(0, termRef.current.rows - 1));
     }, 100);
     return () => clearTimeout(timer);

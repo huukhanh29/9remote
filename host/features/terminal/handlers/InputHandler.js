@@ -61,6 +61,38 @@ const isSaneSize = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
 
 // Pending shrink per session — a later resize (in either direction) supersedes it.
 const shrinkTimers = new Map();
+// Track each connected socket's reported terminal size per session: Map<sessionId, Map<socket, {cols, rows}>>
+const socketSessionSizes = new Map();
+
+export function recordSocketSessionSize(socket, sessionId, cols, rows) {
+  if (!socket || !sessionId || !isSaneSize(cols, RESIZE_MIN_COLS, RESIZE_MAX_COLS) || !isSaneSize(rows, RESIZE_MIN_ROWS, RESIZE_MAX_ROWS)) return;
+  let bySocket = socketSessionSizes.get(sessionId);
+  if (!bySocket) {
+    bySocket = new Map();
+    socketSessionSizes.set(sessionId, bySocket);
+  }
+  bySocket.set(socket, { cols, rows });
+  if (!socket.data?._termSizeCleanupArmed) {
+    if (socket.data) socket.data._termSizeCleanupArmed = true;
+    socket.on?.("disconnect", () => {
+      for (const map of socketSessionSizes.values()) map.delete(socket);
+    });
+  }
+}
+
+function hasWiderConnectedPeer(sessionId, excludeSocket, targetCols) {
+  const bySocket = socketSessionSizes.get(sessionId);
+  if (!bySocket) return false;
+  for (const [peer, size] of bySocket.entries()) {
+    if (peer === excludeSocket) continue;
+    if (peer?.connected === false) {
+      bySocket.delete(peer);
+      continue;
+    }
+    if (size.cols > targetCols) return true;
+  }
+  return false;
+}
 
 // Guard against duplicate multi-character batch/prompt inputs re-sent on carrier
 // reconnect or ack timeout (along with their trailing Enter keystroke).
@@ -134,6 +166,12 @@ export function setupInputHandlers(socket, sessions) {
       console.log(`[input-dedupe] dropped duplicate batch input for ${sessionId} (len=${strData.length})`);
       return cb?.({ ok: true, deduped: true });
     }
+    session.activeInputSocket = socket;
+    const senderSize = socketSessionSizes.get(sessionId)?.get(socket);
+    if (senderSize && (senderSize.cols !== session.lastCols || senderSize.rows !== session.lastRows)) {
+      clearShrink(sessionId);
+      applyResize(sessions, sessionId, senderSize.cols, senderSize.rows);
+    }
     trackLaunchLine(sessionId, data);
     if (session.daemon && daemonClient.isConnected()) {
       // sendInput is fire-and-forget over the unix socket: a truthy return means the
@@ -160,15 +198,24 @@ export function setupInputHandlers(socket, sessions) {
     if (!isSaneSize(cols, RESIZE_MIN_COLS, RESIZE_MAX_COLS)) return;
     if (!isSaneSize(rows, RESIZE_MIN_ROWS, RESIZE_MAX_ROWS)) return;
 
+    recordSocketSessionSize(socket, sessionId, cols, rows);
+
     // Any newer size supersedes a shrink still waiting out its window.
     clearShrink(sessionId);
     if (cols >= (session.lastCols ?? 0)) return applyResize(sessions, sessionId, cols, rows);
+
+    // Do not let a narrower background client (e.g. phone at 50 cols) shrink a session
+    // while a wider desktop client is connected, unless this socket is actively typing.
+    if (session.activeInputSocket !== socket && hasWiderConnectedPeer(sessionId, socket, cols)) {
+      return;
+    }
 
     // Narrower than current: hold it. A transient dip (panel slide, soft keyboard)
     // is followed by the real size before the window elapses, and that later call
     // clears this timer — so only a size the client actually settled on lands.
     shrinkTimers.set(sessionId, setTimeout(() => {
       shrinkTimers.delete(sessionId);
+      if (session.activeInputSocket !== socket && hasWiderConnectedPeer(sessionId, socket, cols)) return;
       applyResize(sessions, sessionId, cols, rows);
     }, RESIZE_SHRINK_SETTLE_MS));
   });

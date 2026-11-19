@@ -117,14 +117,14 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
     // Hashed build assets are immutable; everything else (HTML, RSC .txt) must
     // revalidate or a stale bundle keeps running after an agent update.
     const isWebJs = ext === ".js" && filePath.startsWith(WEB_DIST);
-    const is8126Chunk = isWebJs && filePath.includes("8126-");
-    const immutable = !is8126Chunk && filePath.includes(`${sep}_next${sep}static${sep}`);
+    const isPatchedChunk = isWebJs && (filePath.includes("8126-") || filePath.includes("layout-"));
+    const immutable = !isPatchedChunk && filePath.includes(`${sep}_next${sep}static${sep}`);
     // A caller that already decided this file's caching (the sites host) keeps it.
     if (!res.hasHeader("Cache-Control")) {
       res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-cache");
     }
     let body = readFileSync(filePath);
-    if (is8126Chunk) {
+    if (isPatchedChunk) {
       let text = body.toString("utf8");
       let changed = false;
       if (port !== 2208 && text.includes('="https://9remote.cc/",s=2208,')) {
@@ -134,6 +134,12 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
       // Fix TUI cursor jumping / missing characters in agy (cud1=\n broken by convertEol:true)
       if (text.includes("convertEol:!0")) {
         text = text.replaceAll("convertEol:!0", "convertEol:!1");
+        changed = true;
+      }
+      // Always force-emit real pane cols/rows on desktop focus so a session shrunk to 50 cols
+      // by a mobile/narrow view immediately expands back to the desktop pane's true width.
+      if (text.includes("eg(e?{force:!0}:void 0)")) {
+        text = text.replaceAll("eg(e?{force:!0}:void 0)", "eg({force:!0})");
         changed = true;
       }
       if (changed) body = Buffer.from(text, "utf8");

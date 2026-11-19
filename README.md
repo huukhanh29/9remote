@@ -41,6 +41,18 @@ Lệnh `npm run local:setup` sẽ tự động:
   - **macOS:** `launchctl list | grep cc.9remote.local2200` (xem log: `tail -n 35 ~/.9remote-2200/logs/launchd.log`)
   - **Windows (PowerShell):** `wscript "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\9remote-2200.vbs"`
 
+### 3. Đồng bộ (Sync) chung Workspace & Terminal với bản 9remote cũ (`2208`)
+
+Mặc định khi chạy `npm run local:setup` hoặc `npm run local:restart`, bản cổng **`2200`** sẽ **tự động sync chung 100% workspace và các phiên terminal đang chạy** với bản **`2208`** (`~/.9remote`):
+- **Dùng chung 1 `ptyDaemon` duy nhất:** cả hai cổng `2200` và `2208` cùng kết nối vào `~/.9remote/pty-daemon.sock` (Windows: `\\.\pipe\9remote-pty`), nên mọi phiên `claude`, `agy`, terminal đang chạy ở bản cũ đều xuất hiện và gõ/nhận kết quả theo thời gian thực ở cả 2 cổng.
+- **Liên kết trực tiếp dữ liệu Workspace & Session:** `scripts/service2200.mjs` tự tạo symlink các tệp trong `~/.9remote-2200` trỏ về `~/.9remote`:
+  - `state/terminalWorkspaces.json` (danh sách workspace & nhóm thư mục)
+  - `state/sessions.json` (danh sách phiên terminal & metadata)
+  - `state/conversationModes.json`, `state/notes`, và thư mục `ai-sessions`
+- **Tự động cập nhật chéo khi có thay đổi:** `SessionHandler.js` tự kiểm tra `mtimeMs` của `terminalWorkspaces.json` và `sessions.json` mỗi khi lấy danh sách, nên tạo/đổi tên/đóng workspace hoặc terminal ở cổng này thì cổng kia cập nhật ngay mà không cần restart.
+- **Giữ riêng Key & cấu hình kết nối:** `~/.9remote-2200/keys.json` và `logs/` vẫn tách riêng để cổng `2200` có Key `sk-...` độc lập khi cần nối từ xa.
+- *(Tùy chọn)* Nếu muốn tách bản `2200` thành một workspace trống hoàn toàn riêng (không dùng chung với `2208`), chỉ cần đặt biến môi trường `NREMOTE_ISOLATE_WORKSPACE=1` cho service.
+
 ---
 
 Your entire dev workstation in your pocket. A remote IDE, 60fps desktop stream, visual file explorer, live mobile emulator, zero-config localhost preview, and every AI harness in one UI — Claude Code, Codex, Gemini CLI & 30+ agents — on PC, Web, iPad, or phone.

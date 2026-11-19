@@ -60,7 +60,7 @@ export const RESIZE_MIN_ROWS = 4;
 export const RESIZE_MAX_COLS = 2000;
 export const RESIZE_MAX_ROWS = 500;
 // Delay shrinking to allow soft-keyboard/panel transitions to settle.
-export const RESIZE_SHRINK_SETTLE_MS = 300;
+export const RESIZE_SHRINK_SETTLE_MS = 1200;
 
 export const SESSION_NAME_MAX = 40;
 export const AUTO_NAME_RE = /^(Term|Terminal) \d+$/;

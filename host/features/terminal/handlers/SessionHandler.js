@@ -617,16 +617,23 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
         session = { daemon: true, name: autoName, createdAt: Date.now(), cwd: created.cwd, shellId: created.shellId, shellLabel: created.shellLabel, lastCols: cols, lastRows: rows };
         sessions.set(sessionId, session);
         saveSessionMetadata(sessions);
+        let shouldPulseWinch = false;
         if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
           recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
-          if (joinCols >= (session.lastCols ?? 0) && (joinCols !== session.lastCols || joinRows !== session.lastRows)) {
-            session.lastCols = joinCols;
-            session.lastRows = joinRows;
-            daemonClient.resizeSession(sessionId, joinCols, joinRows);
-            saveSessionMetadata(sessions);
+          if (joinCols >= (session.lastCols ?? 0)) {
+            shouldPulseWinch = true;
+            if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
+              session.lastCols = joinCols;
+              session.lastRows = joinRows;
+              saveSessionMetadata(sessions);
+            }
           }
         }
         const result = await daemonClient.joinSession(sessionId);
+        if (shouldPulseWinch) {
+          daemonClient.resizeSession(sessionId, Math.max(20, joinCols - 1), joinRows);
+          setTimeout(() => daemonClient.resizeSession(sessionId, joinCols, joinRows), 45);
+        }
         return callback({ success: result.success, name: session.name, cwd: result.cwd || session.cwd, recreated: true, error: result.error });
       } catch (e) {
         return callback({ success: false, error: e.message });
@@ -649,16 +656,23 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
           session.lastRows = rows;
           saveSessionMetadata(sessions);
         }
+        let shouldPulseWinch = false;
         if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
           recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
-          if (joinCols >= (session.lastCols ?? 0) && (joinCols !== session.lastCols || joinRows !== session.lastRows)) {
-            session.lastCols = joinCols;
-            session.lastRows = joinRows;
-            daemonClient.resizeSession(sessionId, joinCols, joinRows);
-            saveSessionMetadata(sessions);
+          if (joinCols >= (session.lastCols ?? 0)) {
+            shouldPulseWinch = true;
+            if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
+              session.lastCols = joinCols;
+              session.lastRows = joinRows;
+              saveSessionMetadata(sessions);
+            }
           }
         }
         const result = await daemonClient.joinSession(sessionId);
+        if (shouldPulseWinch) {
+          daemonClient.resizeSession(sessionId, Math.max(20, joinCols - 1), joinRows);
+          setTimeout(() => daemonClient.resizeSession(sessionId, joinCols, joinRows), 45);
+        }
         // Persist live cwd (user may have cd'd) — agent is source of truth
         if (result.cwd && result.cwd !== session.cwd) { session.cwd = result.cwd; saveSessionMetadata(sessions); }
         callback({ success: result.success, name: session.name, cwd: result.cwd || session.cwd, total: result.total || 0, replaySize: result.replaySize || 0, error: result.error });

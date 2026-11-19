@@ -400,10 +400,12 @@ export function setupTerminalSocket(io, apiKey) {
       // Buffer. Peers that never announced caps.binOut are downgraded to b64 at
       // the send door (PM), not here: emit-time does not know who is listening.
       let raw = enc === "b64" ? Buffer.from(data, "base64") : Buffer.from(data || "");
-      // Prepend ANSI Mode 20 Reset (\x1b[20l -> convertEol=false in xterm.js) on replay or
-      // synchronized TUI frames (\x1b[?2026h) so TUI apps like `agy` using bare LF (cud1=\n)
-      // for same-column cursor-down never get their cursor yanked to column 0, even on 9remote.cc.
-      if (replay === true || raw.includes("\x1b[?2026h")) {
+      // Prepend ANSI Mode 20 Reset (\x1b[20l -> convertEol=false in xterm.js) and Bracketed Paste
+      // (\x1b[?2004h) on replay or synchronized TUI frames (\x1b[?2026h) so TUI apps like `agy`
+      // never get cursor yanked to column 0 or split multi-line pastes into separate submits.
+      if (replay === true) {
+        raw = Buffer.concat([Buffer.from("\x1b[20l\x1b[?2004h", "utf8"), raw]);
+      } else if (raw.includes("\x1b[?2026h")) {
         raw = Buffer.concat([Buffer.from("\x1b[20l", "utf8"), raw]);
       }
       if (raw.length > OUTPUT_SLICE_BYTES) {

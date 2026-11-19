@@ -1,6 +1,6 @@
 import * as daemonClient from "../ptyDaemonClient.js";
 import { UPLOAD_DIR, saveSessionMetadata } from "../ptyHelper.js";
-import { getConversation, setSessionAgent, setConversationId, setLastPrompt } from "../statusManager.js";
+import { getConversation, getSessionAgent, setSessionAgent, setConversationId, setLastPrompt } from "../statusManager.js";
 import { agentIdFromLaunchLine, parseResumeLine } from "../agentCatalog.js";
 import { resumeCommand } from "../agentHistory.js";
 import { engineFromAgent } from "../conversationModes.js";
@@ -142,13 +142,23 @@ function clearShrink(sessionId) {
 // Apply a validated size to the PTY and remember it, so a respawn (daemon restart)
 // inherits the real size instead of 80×24. Only reached for sizes that survived
 // both the sanity floor and the shrink settle window.
-function applyResize(sessions, sessionId, cols, rows) {
+function applyResize(sessions, sessionId, cols, rows, forceSigwinch = false) {
   const session = sessions.get(sessionId);
   if (!session) return;
+  const prevCols = session.lastCols ?? 0;
+  const expanding = cols > prevCols || forceSigwinch;
   session.lastCols = cols;
   session.lastRows = rows;
   persistSessionsDebounced(sessions);
-  if (session.daemon && daemonClient.isConnected()) return daemonClient.resizeSession(sessionId, cols, rows);
+  if (session.daemon && daemonClient.isConnected()) {
+    if (expanding && cols > 20) {
+      // Nudge cols-1 then cols so kernel PTY always fires a fresh SIGWINCH to redraw TUI bars
+      daemonClient.resizeSession(sessionId, cols - 1, rows);
+      setTimeout(() => daemonClient.resizeSession(sessionId, cols, rows), 30);
+      return;
+    }
+    return daemonClient.resizeSession(sessionId, cols, rows);
+  }
   if (session.pty) {
     try { session.pty.resize(cols, rows); } catch (e) { console.log(`Resize failed for ${sessionId}: ${e.message}`); }
   }
@@ -173,15 +183,38 @@ export function setupInputHandlers(socket, sessions) {
       applyResize(sessions, sessionId, senderSize.cols, senderSize.rows);
     }
     trackLaunchLine(sessionId, data);
+
+    // Wrap multi-line text payloads in Bracketed Paste (\x1b[200~...\x1b[201~) so TUI agents
+    // like `agy` treat internal newlines as a single multi-line message instead of submitting
+    // the first line immediately and queueing subsequent lines as separate turns.
+    let writePayload = strData;
+    let delayedEnter = false;
+    if (
+      typeof strData === "string" &&
+      strData.length > 1 &&
+      !strData.startsWith("\x1b") &&
+      /[\r\n]/.test(strData.replace(/[\r\n]+$/, ""))
+    ) {
+      delayedEnter = /[\r\n]$/.test(strData);
+      const body = strData.replace(/[\r\n]+$/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      writePayload = `\x1b[200~${body}\x1b[201~`;
+    }
+
     if (session.daemon && daemonClient.isConnected()) {
       // sendInput is fire-and-forget over the unix socket: a truthy return means the
       // write was accepted — the strongest landed-signal this path can give.
-      const written = daemonClient.sendInput(sessionId, data);
+      const written = daemonClient.sendInput(sessionId, writePayload);
+      if (written && delayedEnter) {
+        setTimeout(() => daemonClient.sendInput(sessionId, "\r"), 40);
+      }
       return cb?.(written ? { ok: true } : { ok: false, error: "daemon-write-failed" });
     }
     if (session.pty) {
       try {
-        session.pty.write(Buffer.isBuffer(data) ? data.toString("utf-8") : data);
+        session.pty.write(writePayload);
+        if (delayedEnter) {
+          setTimeout(() => { try { session.pty.write("\r"); } catch {} }, 40);
+        }
         cb?.({ ok: true });
       } catch (e) {
         return cb?.({ ok: false, error: e?.message || "write-failed" });
@@ -271,10 +304,23 @@ export function setupInputHandlers(socket, sessions) {
       const filePath = path.join(UPLOAD_DIR, `${Date.now()}_${safeFilename}`);
       fs.writeFileSync(filePath, Buffer.from(content, "base64"));
       const isImage = typeof type === "string" && type.startsWith("image/");
+      // Detect whether this terminal is running `agy` (Antigravity CLI): unlike Claude Code,
+      // `agy` does not read X11/OS image clipboard on Ctrl+V (\x16); it expects the image file path.
+      let activeAgent = session.agent || getSessionAgent(sessionId) || getConversation(sessionId)?.agent || null;
+      if (!activeAgent && session.daemon && daemonClient.isConnected()) {
+        const live = await daemonClient.listSessions().catch(() => []);
+        const fg = (live.find((s) => s.id === sessionId)?.foregroundProcess || "").toLowerCase();
+        if (fg === "agy" || fg.includes("antigravity")) activeAgent = "antigravity";
+      }
+      const isAgy = activeAgent === "antigravity" || activeAgent === "agy";
       let data;
-      if (isImage) {
-        await setClipboardFromFile(filePath, type);
-        data = PASTE_KEY;
+      if (isImage && !isAgy) {
+        try {
+          await setClipboardFromFile(filePath, type);
+          data = PASTE_KEY;
+        } catch {
+          data = `${filePath} `;
+        }
       } else {
         // Trailing space separates the path from any following text/next path.
         data = `${filePath} `;

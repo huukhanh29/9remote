@@ -30,7 +30,7 @@ const HISTORY_CHUNK_SIZE = 256 * 1024;
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 
 // Buffer storage = Buffer[] (byte-accurate) to keep total/have consistent across multibyte/ANSI.
-const RESTORE_MODES = ["1049", "1047", "1000", "1002", "1003", "1006", "1015", "1005"];
+const RESTORE_MODES = ["1049", "1047", "1000", "1002", "1003", "1006", "1015", "1005", "2004"];
 const DEC_PRIVATE_RE = /\x1b\[\?([0-9;]+)([hl])/g;
 
 function applyModes(modes, data) {

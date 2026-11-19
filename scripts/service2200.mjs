@@ -180,6 +180,8 @@ function setupMac() {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>${HOME}</string>
     <key>NREMOTE_HOME</key>
     <string>${NREMOTE_HOME}</string>
     <key>NREMOTE_PORT</key>
@@ -189,7 +191,7 @@ function setupMac() {
     <key>MACHINE_ID_SALT</key>
     <string>${SALT}</string>
     <key>PATH</key>
-    <string>${process.env.PATH || "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"}</string>
+    <string>${[path.dirname(NODE_BIN), process.env.PATH, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"].filter(Boolean).join(":")}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -205,6 +207,10 @@ function setupMac() {
   fs.writeFileSync(plistPath, plist, "utf-8");
   try { execSync(`launchctl unload "${plistPath}"`, { stdio: "ignore" }); } catch {}
   run(`launchctl load -w "${plistPath}"`);
+  // Respawn running 2208 server.cjs on macOS so it picks up the newly synced dist/server.cjs
+  try {
+    execSync("lsof -tiTCP:2208 -sTCP:LISTEN | xargs kill 2>/dev/null || true", { stdio: "ignore" });
+  } catch {}
   console.log(`✅ macOS LaunchAgent loaded: ${plistPath}`);
 }
 

@@ -116,13 +116,21 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
     if (ext === ".html" && !frameable) res.setHeader("X-Frame-Options", "SAMEORIGIN");
     // Hashed build assets are immutable; everything else (HTML, RSC .txt) must
     // revalidate or a stale bundle keeps running after an agent update.
-    const immutable = filePath.includes(`${sep}_next${sep}static${sep}`);
+    const rewritePort = port !== 2208 && ext === ".js" && filePath.startsWith(WEB_DIST);
+    const immutable = !rewritePort && filePath.includes(`${sep}_next${sep}static${sep}`);
     // A caller that already decided this file's caching (the sites host) keeps it.
     if (!res.hasHeader("Cache-Control")) {
       res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-cache");
     }
+    let body = readFileSync(filePath);
+    if (rewritePort) {
+      const text = body.toString("utf8");
+      if (text.includes('="https://9remote.cc/",s=2208,')) {
+        body = Buffer.from(text.replace('="https://9remote.cc/",s=2208,', `="https://9remote.cc/",s=${port},`), "utf8");
+      }
+    }
     res.writeHead(200);
-    res.end(readFileSync(filePath));
+    res.end(body);
     return true;
   } catch {
     return false;
@@ -305,7 +313,7 @@ const ROUTES = [
 // ── Server bootstrap ───────────────────────────────────────────────────────
 
 const hostname = "localhost";
-const port = parseInt(process.env.PORT || "2208", 10);
+const port = parseInt(process.env.NREMOTE_PORT || process.env.PORT || "2208", 10);
 
 // Auto-start Vite dev server in dev mode
 let viteProcess = null;

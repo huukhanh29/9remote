@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IS_DOCKER = existsSync("/.dockerenv");
 const UPDATE_CHECK_TIMEOUT = 8000;
 const SAFETY_TIMEOUT = 15000;
-const SERVER_PORT = 2208;
+const SERVER_PORT = parseInt(process.env.NREMOTE_PORT || process.env.PORT || "2208", 10);
 // Legacy cloudflared PID path for cleanup during upgrade from older versions
 const LEGACY_CLOUDFLARED_PID_FILE = path.join(os.homedir(), ".9remote", "cloudflared.pid");
 

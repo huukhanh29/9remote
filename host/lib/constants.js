@@ -67,7 +67,7 @@ dns.lookup = (hostname, options, cb) => {
  */
 
 // Local host HTTP server port (UI + API)
-export const SERVER_PORT = 2208;
+export const SERVER_PORT = parseInt(process.env.NREMOTE_PORT || process.env.PORT || "2208", 10);
 
 // Spawn children with the running interpreter: a Finder-launched app has a bare
 // PATH, so literal "node" is not found. Under Electron, its Node needs the flag.

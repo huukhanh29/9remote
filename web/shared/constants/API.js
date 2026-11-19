@@ -11,7 +11,9 @@ export const DOCS_URL = "https://docs.9remote.cc/";
 
 // Port the host serves its local API on. Mirrors host/lib/constants.js
 // SERVER_PORT — the two runtimes share no module, only this number.
-export const AGENT_PORT = 2208;
+export const AGENT_PORT = (isBrowser && process.env.NEXT_PUBLIC_STATIC_EXPORT === "1" && Number(location.port))
+  ? Number(location.port)
+  : 2208;
 
 // The host on this machine, addressed directly. A local page talks to it
 // cross-origin rather than through a dev-server rewrite: proxying would reach the

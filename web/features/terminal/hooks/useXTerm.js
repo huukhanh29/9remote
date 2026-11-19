@@ -17,6 +17,7 @@ import { createHistoryChain } from "@/features/terminal/lib/historyChain";
 import { createJoinSession } from "@/features/terminal/lib/termJoin";
 import { createOutputRouter } from "@/features/terminal/lib/termOutputRouter";
 import { writeChunked } from "@/features/terminal/lib/historyMirror";
+import { unwrapTerminalSelection } from "@/features/terminal/lib/unwrapSelection";
 import { useTermTouchGestures } from "@/features/terminal/hooks/useTermTouchGestures";
 import { connForSession } from "@/shared/transport/hostConn";
 import { useFleetStore } from "@/shared/stores/fleetStore";
@@ -379,7 +380,17 @@ export function useXTerm({ bus: propBus, sessionId, theme, terminalTheme, isVisi
       term.options.smoothScrollDuration = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50
         ? RENDERER.smoothScrollDuration : 0;
     };
+    const handleCopy = (e) => {
+      const sel = term.getSelection();
+      if (!sel || !sel.includes("\n") || !e.clipboardData) return;
+      const unwrapped = unwrapTerminalSelection(sel);
+      if (unwrapped !== sel) {
+        e.clipboardData.setData("text/plain", unwrapped);
+        e.preventDefault();
+      }
+    };
     wheelEl.addEventListener("wheel", handleWheel, { passive: true });
+    wheelEl.addEventListener("copy", handleCopy, true);
 
     // WebGL renderer (VS Code parity: WebGL → DOM fallback). Loaded after joinSession to avoid a blank screen.
     let webglAddon = null;
@@ -675,6 +686,8 @@ export function useXTerm({ bus: propBus, sessionId, theme, terminalTheme, isVisi
       if (writeBatcherRef.current) writeBatcherRef.current.dispose();
       cleanupImeFix();
       cleanupMouseFix();
+      wheelEl.removeEventListener("wheel", handleWheel);
+      wheelEl.removeEventListener("copy", handleCopy, true);
       fitAddon.dispose();
       term.dispose();
       termRef.current = null;

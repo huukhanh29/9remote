@@ -3,6 +3,7 @@
 import { useEffect, useRef, memo, useState, useCallback } from "react";
 import "@xterm/xterm/css/xterm.css";
 import SelectionActionButton from "@/features/terminal/components/SelectionActionButton";
+import { unwrapTerminalSelection } from "@/features/terminal/lib/unwrapSelection";
 import { useWorkspaceChangedCount } from "@/features/terminal/hooks/useWorkspaceChangedCount";
 import { useXTerm } from "@/features/terminal/hooks/useXTerm";
 import { THEMES, resolveTerminalTheme } from "@/features/terminal/constants/themes";
@@ -110,7 +111,7 @@ function TerminalPane({
     bus: activeBus, sessionId, theme, terminalTheme, isVisible, isFocused, containerRef, mountDelay,
     bgKey: bgSrc ? paneBgKey : "none",
     onInput: handleClear,
-    onSelectionMade: (text, pos) => setSelection({ text, x: pos.x, y: pos.y }),
+    onSelectionMade: (text, pos) => setSelection({ text: unwrapTerminalSelection(text), x: pos.x, y: pos.y }),
   });
 
 // Scroll wrapper so the cursor/content stays visible after a viewport shrink (soft KB).

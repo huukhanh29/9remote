@@ -114,9 +114,17 @@ async function _syncDaemonSessions() {
   const liveById = new Map(daemonSessions.map((s) => [s.id, s]));
   const metadata = loadSessionMetadata();
 
-  // Kill daemon orphans (live but absent from agent metadata) — leftovers from an older daemon
+  // Adopt any live daemon session missing from metadata instead of killing it,
+  // so two local instances sharing ptyDaemon never kill a session created by the peer.
   for (const s of daemonSessions) {
-    if (!metadata[s.id]) { try { await daemonClient.deleteSession(s.id); } catch {} }
+    if (!metadata[s.id]) {
+      metadata[s.id] = {
+        name: s.name || "Terminal",
+        autoNamed: true,
+        createdAt: s.createdAt || Date.now(),
+        cwd: s.cwd || null
+      };
+    }
   }
 
   // Agent metadata is the source of truth; daemon only reports which are live + live cwd

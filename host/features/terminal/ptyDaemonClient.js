@@ -12,7 +12,9 @@ import { NODE_BIN, nodeSpawnEnv, PATHS } from "../../lib/constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const SOCKET_DIR = PATHS.ROOT;
+const SOCKET_DIR = process.env.NREMOTE_ISOLATE_WORKSPACE === "1"
+  ? PATHS.ROOT
+  : path.join(os.homedir(), ".9remote");
 const SOCKET_PATH = process.platform === "win32"
   ? "\\\\.\\pipe\\9remote-pty"
   : path.join(SOCKET_DIR, "pty-daemon.sock");

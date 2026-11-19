@@ -51,6 +51,47 @@ function ensureGlobalDeps() {
   }
 }
 
+function linkSharedItem(src, dest) {
+  try {
+    if (!fs.existsSync(src)) return;
+    try {
+      const st = fs.lstatSync(dest);
+      if (st.isSymbolicLink() && fs.readlinkSync(dest) === src) return;
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {}
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.symlinkSync(src, dest);
+  } catch {}
+}
+
+function linkSharedWorkspacesAndDaemon() {
+  const baseHome = path.join(HOME, ".9remote");
+  if (!fs.existsSync(baseHome) || path.resolve(baseHome) === path.resolve(NREMOTE_HOME)) return;
+
+  // Stop isolated ptyDaemon in NREMOTE_HOME if one was spawned before linking
+  const oldPidFile = path.join(NREMOTE_HOME, "pids", "ptyDaemon.pid");
+  try {
+    if (fs.existsSync(oldPidFile) && !fs.lstatSync(oldPidFile).isSymbolicLink()) {
+      const pid = parseInt(fs.readFileSync(oldPidFile, "utf8").trim(), 10);
+      if (Number.isFinite(pid) && pid > 0) {
+        try { process.kill(pid, "SIGTERM"); } catch {}
+      }
+    }
+  } catch {}
+
+  fs.mkdirSync(path.join(NREMOTE_HOME, "state"), { recursive: true });
+  fs.mkdirSync(path.join(NREMOTE_HOME, "pids"), { recursive: true });
+
+  // Share PTY daemon socket, daemon runtime, AI sessions, and workspace/session state files
+  linkSharedItem(path.join(baseHome, "pty-daemon.sock"), path.join(NREMOTE_HOME, "pty-daemon.sock"));
+  linkSharedItem(path.join(baseHome, "daemon"), path.join(NREMOTE_HOME, "daemon"));
+  linkSharedItem(path.join(baseHome, "pids", "ptyDaemon.pid"), path.join(NREMOTE_HOME, "pids", "ptyDaemon.pid"));
+  linkSharedItem(path.join(baseHome, "ai-sessions"), path.join(NREMOTE_HOME, "ai-sessions"));
+  for (const name of ["sessions.json", "terminalWorkspaces.json", "conversationModes.json", "notes"]) {
+    linkSharedItem(path.join(baseHome, "state", name), path.join(NREMOTE_HOME, "state", name));
+  }
+}
+
 async function buildAndSync() {
   ensureGlobalDeps();
   fs.mkdirSync(path.join(NREMOTE_HOME, "bin"), { recursive: true });
@@ -60,6 +101,7 @@ async function buildAndSync() {
       fs.cpSync(defaultBin, path.join(NREMOTE_HOME, "bin"), { recursive: true, force: false });
     } catch {}
   }
+  linkSharedWorkspacesAndDaemon();
   await import("./syncHostFast.mjs");
 }
 

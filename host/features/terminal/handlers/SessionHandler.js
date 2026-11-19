@@ -1,6 +1,7 @@
 import pty from "node-pty";
 import * as daemonClient from "../ptyDaemonClient.js";
-import { getDefaultShell, getDefaultCwd, buildShellEnv, saveSessionBuffer, loadSessionBuffer, deleteSessionBuffer, saveSessionMetadata, saveWorkspaces, loadSessionNote, saveSessionNote, deleteSessionNote, UPLOAD_DIR } from "../ptyHelper.js";
+import { getDefaultShell, getDefaultCwd, buildShellEnv, saveSessionBuffer, loadSessionBuffer, deleteSessionBuffer, loadSessionMetadata, loadWorkspaces, saveSessionMetadata, saveWorkspaces, loadSessionNote, saveSessionNote, deleteSessionNote, UPLOAD_DIR } from "../ptyHelper.js";
+import { PATHS } from "../../../lib/constants.js";
 import { resolveShell, getShellList, SESSION_NAME_MAX, AUTO_NAME_RE, OUTPUT_SLICE_BYTES } from "../constants.js";
 import { createLogger } from "../../../lib/logger.js";
 
@@ -206,7 +207,66 @@ function attachPtyListeners(ptyProcess, sessionId, sessionData, io, sessions) {
 }
 
 export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWorkspaces, sessionOrder = []) {
-  const persist = () => saveWorkspaces(workspaces, sessionWorkspaces, sessionOrder);
+  let lastSessionsMtime = 0;
+  let lastWorkspacesMtime = 0;
+  const sessionsFile = path.join(PATHS.STATE, "sessions.json");
+  const workspacesFile = path.join(PATHS.STATE, "terminalWorkspaces.json");
+
+  const syncSharedDiskState = () => {
+    try {
+      if (fs.existsSync(workspacesFile)) {
+        const wm = fs.statSync(workspacesFile).mtimeMs;
+        if (wm !== lastWorkspacesMtime) {
+          lastWorkspacesMtime = wm;
+          const saved = loadWorkspaces();
+          if (saved) {
+            workspaces.clear();
+            for (const w of saved.workspaces || []) workspaces.set(w.id, w);
+            for (const k of Object.keys(sessionWorkspaces)) delete sessionWorkspaces[k];
+            Object.assign(sessionWorkspaces, saved.sessionWorkspaces || {});
+            sessionOrder.length = 0;
+            sessionOrder.push(...(saved.sessionOrder || []));
+          }
+        }
+      }
+      if (fs.existsSync(sessionsFile)) {
+        const sm = fs.statSync(sessionsFile).mtimeMs;
+        if (sm !== lastSessionsMtime) {
+          lastSessionsMtime = sm;
+          const meta = loadSessionMetadata();
+          for (const id of [...sessions.keys()]) {
+            if (!meta[id]) sessions.delete(id);
+          }
+          for (const [id, m] of Object.entries(meta)) {
+            const existing = sessions.get(id);
+            if (existing) {
+              existing.name = m.name ?? existing.name;
+              existing.workspacePath = m.workspacePath ?? existing.workspacePath;
+              existing.agent = m.agent ?? existing.agent;
+            } else {
+              sessions.set(id, {
+                daemon: true,
+                name: m.name,
+                autoNamed: m.autoNamed !== false,
+                createdAt: m.createdAt,
+                shellId: m.shellId,
+                cwd: m.cwd,
+                workspacePath: m.workspacePath ?? null,
+                lastCols: m.cols ?? null,
+                lastRows: m.rows ?? null,
+                agent: m.agent || null
+              });
+            }
+          }
+        }
+      }
+    } catch {}
+  };
+
+  const persist = () => {
+    saveWorkspaces(workspaces, sessionWorkspaces, sessionOrder);
+    try { lastWorkspacesMtime = fs.statSync(workspacesFile).mtimeMs; } catch {}
+  };
 
   // Both names are broadcast during transition so clients on previous versions refresh.
   const broadcastChanged = () => {
@@ -242,6 +302,7 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
   socket.on("getSessions", async (callback) => {
     capsLogger.info("[diag] getSessions arrived (socket ready to answer)");
     try {
+      syncSharedDiskState();
       const list = [];
       // Fetch live cwd for daemon sessions (OSC 7 updates daemon-side, not agent cache)
       const useDaemon = PERSISTENCE_MODE === "daemon" && daemonClient.isConnected();
@@ -278,6 +339,7 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
   });
 
   const listWorkspaces = (callback) => {
+    syncSharedDiskState();
     capsLogger.info(`[diag] getWorkspaces arrived+ack → ${workspaces.size} workspaces`);
     callback(Array.from(workspaces.values()));
   };

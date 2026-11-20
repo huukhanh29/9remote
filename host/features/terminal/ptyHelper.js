@@ -178,11 +178,18 @@ export function saveSessionMetadataRaw(metadata) {
   }
 }
 
-export function saveSessionMetadata(sessions) {
+export function saveSessionMetadata(sessions, { removeIds = [] } = {}) {
   try {
+    // Merge with existing on-disk metadata so two local instances (e.g. port 2200 & 2208)
+    // sharing sessions.json via symlink never wipe sessions created by the peer instance.
+    const existing = loadSessionMetadata();
+    const removeSet = new Set(removeIds || []);
     const metadata = {};
+    for (const [id, meta] of Object.entries(existing)) {
+      if (!removeSet.has(id)) metadata[id] = meta;
+    }
     for (const [id, session] of sessions) {
-      metadata[id] = buildSessionMetadata(session, id);
+      if (!removeSet.has(id)) metadata[id] = buildSessionMetadata(session, id);
     }
     const dir = path.dirname(SESSION_METADATA_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

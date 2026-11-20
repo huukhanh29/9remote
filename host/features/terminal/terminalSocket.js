@@ -475,6 +475,7 @@ export function setupTerminalSocket(io, apiKey) {
       if (timer) { clearTimeout(timer); autoNameTimers.delete(sessionId); }
       // Drop any stale finished-badge so title count + UI stay in sync
       clearNotification(sessionId);
+      saveSessionMetadata(sessions, { removeIds: [sessionId] });
       broadcast(io, "sessionClosed", sessionId);
       broadcast(io, "notificationCleared", sessionId);
     });

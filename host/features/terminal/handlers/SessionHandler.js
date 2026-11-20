@@ -295,7 +295,7 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
     forgetSession(sessionId);
     if (sessionWorkspaces[sessionId]) { delete sessionWorkspaces[sessionId]; persist(); }
     deleteSessionNote(sessionId);
-    saveSessionMetadata(sessions);
+    saveSessionMetadata(sessions, { removeIds: [sessionId] });
     return true;
   };
   sessionDestroyer = destroySession;
@@ -304,15 +304,57 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
     capsLogger.info("[diag] getSessions arrived (socket ready to answer)");
     try {
       syncSharedDiskState();
-      const list = [];
-      // Fetch live cwd for daemon sessions (OSC 7 updates daemon-side, not agent cache)
       const useDaemon = PERSISTENCE_MODE === "daemon" && daemonClient.isConnected();
-      for (const [id, session] of sessions) {
-        let cwd = session.cwd;
-        if (useDaemon && session.daemon) {
-          const liveCwd = await daemonClient.getSessionCwd(id);
-          if (liveCwd) { cwd = liveCwd; if (session.cwd !== liveCwd) session.cwd = liveCwd; }
+      if (useDaemon) {
+        const daemonSessions = await daemonClient.listSessions().catch(() => null);
+        if (Array.isArray(daemonSessions)) {
+          const liveById = new Map(daemonSessions.map((s) => [s.id, s]));
+          let changed = false;
+          const staleIds = [];
+          for (const ds of daemonSessions) {
+            const existing = sessions.get(ds.id);
+            const inferredAgent = agentIdFromProcess(ds.foregroundProcess);
+            if (!existing) {
+              const wsId = sessionWorkspaces[ds.id] || null;
+              const wsPath = (wsId && workspaces.get(wsId)?.path) || null;
+              sessions.set(ds.id, {
+                daemon: true,
+                name: ds.name || "Terminal",
+                autoNamed: true,
+                createdAt: ds.createdAt || Date.now(),
+                shellId: ds.shellId || "bash",
+                shellLabel: ds.shellLabel || ds.shellId || "bash",
+                cwd: ds.cwd || wsPath || null,
+                workspacePath: wsPath,
+                agent: inferredAgent || getSessionAgent(ds.id) || null
+              });
+              if (inferredAgent) setSessionAgent(ds.id, inferredAgent);
+              changed = true;
+            } else {
+              if (ds.cwd && existing.cwd !== ds.cwd) existing.cwd = ds.cwd;
+              if (ds.shellLabel && !existing.shellLabel) existing.shellLabel = ds.shellLabel;
+              if (inferredAgent && !existing.agent) {
+                existing.agent = inferredAgent;
+                setSessionAgent(ds.id, inferredAgent);
+              }
+            }
+          }
+          for (const [id, session] of [...sessions.entries()]) {
+            if (session.daemon && !session.needsRespawn && !liveById.has(id)) {
+              sessions.delete(id);
+              staleIds.push(id);
+              changed = true;
+            }
+          }
+          if (changed) {
+            saveSessionMetadata(sessions, { removeIds: staleIds });
+            try { lastSessionsMtime = fs.statSync(sessionsFile).mtimeMs; } catch {}
+          }
         }
+      }
+      const list = [];
+      for (const [id, session] of sessions) {
+        const cwd = session.cwd;
         const workspaceId = sessionWorkspaces[id] || null;
         list.push({
           id, name: session.name, createdAt: session.createdAt, restored: session.restored || false,
@@ -407,6 +449,7 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
         }
         delete sessionWorkspaces[sid];
       }
+      if (targetIds.length) saveSessionMetadata(sessions, { removeIds: targetIds });
       persist();
       broadcastChanged();
       callback({ success: true });

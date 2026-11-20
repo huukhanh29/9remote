@@ -166,13 +166,20 @@ export function buildSessionMetadata(session, sessionId) {
   };
 }
 
+function writeJsonAtomic(filePath, data) {
+  const target = fs.existsSync(filePath) ? fs.realpathSync(filePath) : filePath;
+  const dir = path.dirname(target);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tmp, target);
+}
+
 // Write an already-built metadata object. Used by the group->workspace migration, which
 // runs before the live session map exists.
 export function saveSessionMetadataRaw(metadata) {
   try {
-    const dir = path.dirname(SESSION_METADATA_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SESSION_METADATA_FILE, JSON.stringify(metadata, null, 2), "utf8");
+    writeJsonAtomic(SESSION_METADATA_FILE, metadata);
   } catch (error) {
     console.log("⚠️  Failed to save session metadata:", error.message);
   }
@@ -191,9 +198,7 @@ export function saveSessionMetadata(sessions, { removeIds = [] } = {}) {
     for (const [id, session] of sessions) {
       if (!removeSet.has(id)) metadata[id] = buildSessionMetadata(session, id);
     }
-    const dir = path.dirname(SESSION_METADATA_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SESSION_METADATA_FILE, JSON.stringify(metadata, null, 2), "utf8");
+    writeJsonAtomic(SESSION_METADATA_FILE, metadata);
   } catch (error) {
     console.log("⚠️  Failed to save session metadata:", error.message);
   }

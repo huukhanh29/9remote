@@ -80,6 +80,26 @@ export function recordSocketSessionSize(socket, sessionId, cols, rows) {
   }
 }
 
+export function getSocketSessionSize(socket, sessionId) {
+  if (!socket || !sessionId) return null;
+  return socketSessionSizes.get(sessionId)?.get(socket) || null;
+}
+
+export function syncSessionToSocketSize(sessions, socket, sessionId, forceSigwinch = true) {
+  const session = sessions?.get(sessionId);
+  if (!session || !socket) return false;
+  const peerSize = getSocketSessionSize(socket, sessionId);
+  if (!peerSize) return false;
+  session.activeInputSocket = socket;
+  const changed = peerSize.cols !== session.lastCols || peerSize.rows !== session.lastRows;
+  if (changed || forceSigwinch) {
+    clearShrink(sessionId);
+    applyResize(sessions, sessionId, peerSize.cols, peerSize.rows, true);
+    return changed;
+  }
+  return false;
+}
+
 function hasWiderConnectedPeer(sessionId, excludeSocket, targetCols) {
   const bySocket = socketSessionSizes.get(sessionId);
   if (!bySocket) return false;
@@ -177,10 +197,11 @@ export function setupInputHandlers(socket, sessions) {
       return cb?.({ ok: true, deduped: true });
     }
     session.activeInputSocket = socket;
+    session.activeInputAt = Date.now();
     const senderSize = socketSessionSizes.get(sessionId)?.get(socket);
     if (senderSize && (senderSize.cols !== session.lastCols || senderSize.rows !== session.lastRows)) {
       clearShrink(sessionId);
-      applyResize(sessions, sessionId, senderSize.cols, senderSize.rows);
+      applyResize(sessions, sessionId, senderSize.cols, senderSize.rows, true);
     }
     trackLaunchLine(sessionId, data);
 
@@ -240,7 +261,17 @@ export function setupInputHandlers(socket, sessions) {
 
     // Any newer size supersedes a shrink still waiting out its window.
     clearShrink(sessionId);
-    if (cols >= (session.lastCols ?? 0)) return applyResize(sessions, sessionId, cols, rows);
+    if (cols >= (session.lastCols ?? 0)) {
+      // Do not let an idle background desktop tab hijack PTY width while a narrower
+      // client (e.g. phone) was just actively interacting with this session.
+      const otherActive =
+        session.activeInputSocket &&
+        session.activeInputSocket !== socket &&
+        session.activeInputSocket.connected !== false &&
+        (Date.now() - (session.activeInputAt || 0)) < 15000;
+      if (otherActive) return;
+      return applyResize(sessions, sessionId, cols, rows);
+    }
 
     // Do not let a narrower background client (e.g. phone at 50 cols) shrink a session
     // while a wider desktop client is connected, unless this socket is actively typing.

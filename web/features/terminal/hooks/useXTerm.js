@@ -657,6 +657,7 @@ export function useXTerm({ bus: propBus, sessionId, theme, terminalTheme, isVisi
     const handleVisibilityChange = () => {
       if (!document.hidden && termRef.current) {
         termRef.current.refresh(0, termRef.current.rows - 1);
+        doResizeRef.current?.({ force: true });
         if (useConnectionStore.getState().connected) {
           requestRecover("visible");
         }

@@ -1,7 +1,7 @@
 import pty from "node-pty";
 import * as daemonClient from "../ptyDaemonClient.js";
 import { getDefaultShell, getDefaultCwd, buildShellEnv, saveSessionBuffer, loadSessionBuffer, deleteSessionBuffer, loadSessionMetadata, loadWorkspaces, saveSessionMetadata, saveWorkspaces, loadSessionNote, saveSessionNote, deleteSessionNote, UPLOAD_DIR } from "../ptyHelper.js";
-import { setupInputHandlers, recordSocketSessionSize } from "./InputHandler.js";
+import { setupInputHandlers, recordSocketSessionSize, getSocketSessionSize, syncSessionToSocketSize } from "./InputHandler.js";
 import { PATHS } from "../../../lib/constants.js";
 import { resolveShell, getShellList, SESSION_NAME_MAX, AUTO_NAME_RE, OUTPUT_SLICE_BYTES } from "../constants.js";
 import { createLogger } from "../../../lib/logger.js";
@@ -620,13 +620,16 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
         let shouldPulseWinch = false;
         if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
           recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
-          if (joinCols >= (session.lastCols ?? 0)) {
-            shouldPulseWinch = true;
-            if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
-              session.lastCols = joinCols;
-              session.lastRows = joinRows;
-              saveSessionMetadata(sessions);
-            }
+          // A socket explicitly joining/rejoining (e.g. mobile returning from background)
+          // becomes the active viewport so the PTY immediately matches its width.
+          session.activeInputSocket = socket;
+          session.activeInputAt = Date.now();
+          shouldPulseWinch = true;
+          if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
+            session.lastCols = joinCols;
+            session.lastRows = joinRows;
+            daemonClient.resizeSession(sessionId, joinCols, joinRows);
+            saveSessionMetadata(sessions);
           }
         }
         const result = await daemonClient.joinSession(sessionId);
@@ -659,13 +662,16 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
         let shouldPulseWinch = false;
         if (Number.isInteger(joinCols) && Number.isInteger(joinRows) && joinCols >= 20 && joinRows >= 4) {
           recordSocketSessionSize(socket, sessionId, joinCols, joinRows);
-          if (joinCols >= (session.lastCols ?? 0)) {
-            shouldPulseWinch = true;
-            if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
-              session.lastCols = joinCols;
-              session.lastRows = joinRows;
-              saveSessionMetadata(sessions);
-            }
+          // A socket explicitly joining/rejoining (e.g. mobile returning from background)
+          // becomes the active viewport so the PTY immediately matches its width.
+          session.activeInputSocket = socket;
+          session.activeInputAt = Date.now();
+          shouldPulseWinch = true;
+          if (joinCols !== session.lastCols || joinRows !== session.lastRows) {
+            session.lastCols = joinCols;
+            session.lastRows = joinRows;
+            daemonClient.resizeSession(sessionId, joinCols, joinRows);
+            saveSessionMetadata(sessions);
           }
         }
         const result = await daemonClient.joinSession(sessionId);
@@ -762,13 +768,29 @@ export function setupSessionHandlers(socket, io, sessions, workspaces, sessionWo
   });
 
   // Peek live seq on visibility change to detect gaps without waiting for new output.
+  // When a phone returns from background (`visibilitychange`), resync the PTY to this
+  // socket's width and pulse SIGWINCH so TUI apps redraw at the phone's width right away.
   socket.on("peekSeq", ({ sessionId } = {}, callback) => {
+    const session = sessionId ? sessions.get(sessionId) : null;
+    const peerSize = session ? getSocketSessionSize(socket, sessionId) : null;
+    if (session && peerSize && (peerSize.cols !== session.lastCols || peerSize.rows !== session.lastRows)) {
+      syncSessionToSocketSize(sessions, socket, sessionId, true);
+    }
     callback?.({ seq: currentSeq(sessionId) });
   });
 
   // Gap recovery: emit missing chunk range without full reset+replay; miss falls back to rejoin.
   socket.on("requestGap", ({ sessionId, fromSeq, toSeq } = {}, callback) => {
     if (!Number.isFinite(fromSeq) || !Number.isFinite(toSeq)) return callback?.({ hit: false });
+    const session = sessionId ? sessions.get(sessionId) : null;
+    const peerSize = session ? getSocketSessionSize(socket, sessionId) : null;
+    if (session && peerSize && peerSize.cols !== session.lastCols) {
+      // Output in the gap was formatted for a different width (e.g. 120-col desktop while
+      // this 48-col phone was in background): force a clean rejoin at the phone's width
+      // instead of replaying \x1b[60C sequences that clamp to the right margin.
+      syncSessionToSocketSize(sessions, socket, sessionId, true);
+      return callback?.({ hit: false });
+    }
     const chunks = getGap(sessionId, fromSeq, toSeq);
     if (!chunks) return callback?.({ hit: false });
     for (const c of chunks) {

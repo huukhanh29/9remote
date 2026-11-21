@@ -157,6 +157,10 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
         );
         changed = true;
       }
+      if (text.includes('claude:"Claude",codex:"Codex"')) {
+        text = text.replaceAll('claude:"Claude",codex:"Codex"', 'claude:"Claude",antigravity:"Antigravity",codex:"Codex"');
+        changed = true;
+      }
       if (changed) body = Buffer.from(text, "utf8");
     }
     if (ext === ".html" && filePath.startsWith(WEB_DIST) && !frameable) {

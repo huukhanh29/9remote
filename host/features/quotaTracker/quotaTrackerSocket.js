@@ -6,9 +6,11 @@ import { fetchClaudeQuota } from "./fetchers/claudeFetcher.js";
 import { fetchCodexQuota } from "./fetchers/codexFetcher.js";
 import { fetchKimiQuota } from "./fetchers/kimiFetcher.js";
 import { fetchGrokQuota } from "./fetchers/grokFetcher.js";
+import { fetchAntigravityQuota } from "./fetchers/antigravityFetcher.js";
 
 const FETCHERS = {
   claude: fetchClaudeQuota,
+  antigravity: fetchAntigravityQuota,
   codex: fetchCodexQuota,
   kimi: fetchKimiQuota,
   grok: fetchGrokQuota

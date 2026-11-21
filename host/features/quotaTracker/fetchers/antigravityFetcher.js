@@ -52,7 +52,9 @@ export function parseAgyUsageOutput(stdout, activeModel = "") {
   for (const rawLine of String(stdout || "").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || /^quota:?$/i.test(line)) continue;
-    const cols = line.split(/\s{2,}/);
+    const cols = line.includes("\t")
+      ? line.split("\t").map((c) => c.trim())
+      : line.split(/\s{2,}/);
     if (cols.length < 3) continue;
     const [group, label, value, resetStr] = cols;
     const pctMatch = value.match(/^(\d+(?:\.\d+)?)%$/);

@@ -110,7 +110,7 @@ export const OPEN_SESSION_EVENT = "terminal:openSession";
 
 export const STRIP_ROTATE_MS = 5000;
 export const STRIP_FADE_MS = 250;
-export const STRIP_QUOTA_PIN_PCT = 90;
+export const STRIP_QUOTA_PIN_PCT = 0;
 
 export const TERMINAL_OPTIONS = {
   cursorBlink: true,

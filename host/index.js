@@ -161,6 +161,11 @@ function serveStatic(res, filePath, { frameable = false } = {}) {
         text = text.replaceAll('claude:"Claude",codex:"Codex"', 'claude:"Claude",antigravity:"Antigravity",codex:"Codex"');
         changed = true;
       }
+      // Pin the mobile status strip to always show the quota bar (instead of rotating every 5s)
+      if (text.includes("h&&h.usedPct>=ez.W$")) {
+        text = text.replaceAll("h&&h.usedPct>=ez.W$", "h&&h.usedPct>=0");
+        changed = true;
+      }
       if (changed) body = Buffer.from(text, "utf8");
     }
     if (ext === ".html" && filePath.startsWith(WEB_DIST) && !frameable) {
